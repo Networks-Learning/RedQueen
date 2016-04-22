@@ -21,6 +21,9 @@ class State:
         self.num_sinks = len(sink_ids)
         self.time      = cur_time
         self.sinks     = dict((x,[]) for x in sink_ids)
+        
+    def clone(state):
+        return State(state.time, state.sinks.keys())
 
     def apply_event(self, event):
         """Apply the given event to the state."""
@@ -66,7 +69,7 @@ class Manager:
         # TODO: This only makes runs correct on a single seed system.
         # Will need to extend this to allow running this in a distributed
         # manner.
-        np.random(seed)
+        np.random.seed(seed)
 
         # Step 1: Inform the sources of the sinks associated with them.
         # Step 2: Give them the initial state
@@ -86,7 +89,7 @@ class Manager:
                                            src.src_id)
                                           for src in self.sources)[0]
 
-            # Step 5: If cur_time + Δt < end_time, go to step 4, else Step 7
+            # Step 5: If cur_time + t_delta < end_time, go to step 4, else Step 7
             cur_time = self.state.time
             if cur_time + t_delta > end_time:
                 break
@@ -112,15 +115,20 @@ class Poisson:
 
     def init_state(self, state, follower_sink_ids):
         self.sink_ids = follower_sink_ids
-        self.state = state
+        self.state = State.clone(state)
         self.last_time = state.time
         self.t_delta = Distr.expon.rvs(scale=1.0 / self.rate)
 
     def get_next_event_time(self, event):
         self.state.apply_event(event)
+        cur_time = self.state.time
 
-        if self.state.time >= self.last_time + self.t_delta:
+        if cur_time >= self.last_time + self.t_delta:
             self.t_delta = Distr.expon.rvs(scale=1.0 / self.rate)
+        else:
+            self.t_delta = last_time + self.t_delta - cur_time
+            
+        self.last_time = cur_time
 
         return self.t_delta
 
@@ -139,6 +147,6 @@ class Opt:
         # TODO: Do magic
 
 
-m = Manager([1000], [Poisson(1, 1.0), Poisson(2, 1.0)])
+m = Manager([1000], [Poisson(1, 1.0), Poisson(2, 1.0), Opt(3)])
 
 
