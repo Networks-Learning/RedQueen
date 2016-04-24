@@ -3,7 +3,10 @@
 from __future__ import print_function
 import scipy.stats.distributions as Distr
 import numpy as np
+import pandas as pd
 import sys
+import abc
+import itertools as I
 
 class Event:
     def __init__(self, event_id, time_delta, src_id, sink_ids, metadata=None):
@@ -23,9 +26,7 @@ class State:
         self.num_sinks = len(sink_ids)
         self.time      = cur_time
         self.sinks     = dict((x,[]) for x in sink_ids)
-
-    def clone(state):
-        return State(state.time, state.sinks.keys())
+        self.events    = []
 
     def apply_event(self, event):
         """Apply the given event to the state."""
@@ -33,11 +34,26 @@ class State:
             # This was the first event, ignore
             return
 
+        self.events.append(event)
         self.time += event.time_delta
 
         # Add the event (tweet) to the corresponding lists
         for sink_id in event.sink_ids:
             self.sinks[sink_id].append(event)
+
+    def get_dataframe(self):
+        """Return the list of events."""
+        df = pd.DataFrame.from_records(
+            [{'event_id'   : x.event_id,
+              'time_delta' : x.time_delta,
+              'src_id'     : x.src_id,
+              'sink_id'    : y}
+             for x in self.events
+             for y in x.sink_ids]
+        )
+        df['t'] = np.cumsum(df['time_delta'])
+        return df
+
 
     def time_on_top(self):
         """Returns how much time each source spent on the top."""
@@ -81,6 +97,7 @@ class Manager:
             assert edge_sink_ids.issubset(set(sink_ids)), "Unknown sinks in edge_list."
 
         self.edge_list = edge_list
+        self.sink_ids = sink_ids
         self.state = State(0, sink_ids)
         self.sources = sources
 
@@ -94,7 +111,7 @@ class Manager:
         # Step 2: Give them the initial state
         for src in self.sources:
             follower_ids = [x[1] for x in self.edge_list if x[0] == src.src_id]
-            src.init_state(self.state, follower_ids)
+            src.init_state(self.state.time, self.sink_ids, follower_ids)
 
         last_event = None
         event_id = 100
@@ -127,56 +144,75 @@ class Manager:
         # Step 7: Stop
 
 
-class Poisson:
-    def __init__(self, src_id, rate=1.0):
-        self.rate = rate
-        self.src_id = src_id
-        self.last_event_time = None
-        self.t_delta = None
+# Broadcasters
+##############
 
-    def init_state(self, state, follower_sink_ids):
+class Broadcaster:
+    __metaclass__ = abc.ABCMeta
+
+    def __init__(self, src_id):
+        self.src_id = src_id
+        self.t_delta = None
+        self.last_self_event_time = None
+
+    def init_state(self, start_time, all_sink_ids, follower_sink_ids):
         self.sink_ids = follower_sink_ids
-        self.state = State.clone(state)
+        self.state = State(start_time, all_sink_ids)
 
     def get_next_event_time(self, event):
         self.state.apply_event(event)
         cur_time = self.state.time
 
-        # Assuming that all events will be executed at some point.
         if event is None or event.src_id == self.src_id:
-            self.t_delta = Distr.expon.rvs(scale=1.0 / self.rate)
-            self.last_event_time = cur_time
+            self.last_self_event_time = cur_time
 
-        return self.last_event_time + self.t_delta - cur_time
+        t_delta = self.get_next_interval(event)
+        if t_delta is not None:
+            self.t_delta = t_delta
+
+        ret_t_delta = self.last_self_event_time + self.t_delta - cur_time
+
+        if ret_t_delta < 0:
+            print('returned t_delta = {} < 0, set to 0 instead.'.format(ret_t_delta), file=sys.stderr)
+            ret_t_delta = 0.0
+
+        return ret_t_delta
 
 
-class Opt:
+    @abc.abstractmethod
+    def get_next_interval(self):
+        """Should return a number to replace the current time to next event or
+           None if no change should be made."""
+        raise NotImplemented()
+
+
+class Poisson(Broadcaster):
+    def __init__(self, src_id, rate=1.0):
+        super().__init__(src_id)
+        self.rate = rate
+
+    def get_next_interval(self, event):
+        if event is None or event.src_id == self.src_id:
+            # Draw a new time
+            return Distr.expon.rvs(scale=1.0 / self.rate)
+
+
+class Opt(Broadcaster):
     def __init__(self, src_id, q=1.0, s=1.0):
+        super().__init__(src_id)
         self.q = q
         self.s = s
-        self.src_id = src_id
-        self.last_event_time = None
         self.u_delta = None
-        self.t_delta = None
 
-    def init_state(self, state, follower_sink_ids):
-        self.sink_ids = follower_sink_ids
-        self.state = State.clone(state)
-
-    def get_next_event_time(self, event):
-        self.state.apply_event(event)
-        cur_time = self.state.time
-
+    def get_next_interval(self, event):
         if event is None:
             # Tweet immediately if this is the first event.
             self.u_delta = None
-            self.t_delta = 0
-            self.last_event_time = cur_time
+            return 0
         elif event.src_id == self.src_id:
             # No need to tweet if we are on top of all walls
             self.u_delta = None
-            self.t_delta = np.inf
-            self.last_event_time = cur_time
+            return np.inf
         else:
             # check status of all walls and find position in it.
             wall_ranks = self.state.get_wall_rank(self.src_id, self.sink_ids)
@@ -185,19 +221,33 @@ class Opt:
             rate = np.sqrt(self.q / self.s) * wall_ranks[self.sink_ids[0]]
 
             if self.u_delta is None:
-                # Have to draw the first sample
+                # Draw a uniform random variable to invert
                 self.u_delta = np.random.rand()
 
             # Now re-evaluate the t_delta since last event
-            self.t_delta = Distr.expon.ppf(self.u_delta, scale=1.0 / rate)
+            return Distr.expon.ppf(self.u_delta, scale=1.0 / rate)
 
-        ret_t_delta = self.last_event_time + self.t_delta - cur_time
 
-        if ret_t_delta < 0:
-            print('returned t_delta = {} < 0, set to 0 instead.'.format(ret_t_delta), file=sys.stderr)
-            ret_t_delta = 0.0
+class Hawkes(Broadcaster):
+    def __init__(self, src_id, l_0=1.0, alpha=1.0, beta=1.0):
+        super().__init__(src_id)
+        self.l_0   = 1.0
+        self.alpha = 1.0
+        self.beta  = 1.0
+        self.prev_excitations = []
 
-        return ret_t_delta
+    def get_next_interval(self, event):
+        t = self.state.time
+        if event is None or event.src_id == self.src_id:
+            rate = self.l_0 + \
+                   self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
+                                            for s in self.prev_excitations]))
+
+            t_delta = Distr.expon.rvs(scale=1.0 / rate)
+            self.prev_excitations.append(t_delta)
+            return t_delta
+
+
 
 
 m = Manager([1000], [Poisson(1, 1.0), Poisson(2, 1.0), Opt(3)])
