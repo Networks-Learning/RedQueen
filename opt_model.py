@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 
+from __future__ import print_function
 import scipy.stats.distributions as Distr
 import numpy as np
+import sys
 
 class Event:
     def __init__(self, event_id, time_delta, src_id, sink_ids, metadata=None):
@@ -12,7 +14,7 @@ class Event:
         self.metadata   = metadata
 
     def __repr__(self):
-        return ('Event_id: {}, time_delta: {}, src_id: {}'
+        return ('[ Event_id: {}, time_delta: {}, src_id: {} ]'
                 .format(self.event_id, self.time_delta, self.src_id))
 
 
@@ -21,7 +23,7 @@ class State:
         self.num_sinks = len(sink_ids)
         self.time      = cur_time
         self.sinks     = dict((x,[]) for x in sink_ids)
-        
+
     def clone(state):
         return State(state.time, state.sinks.keys())
 
@@ -36,6 +38,23 @@ class State:
         # Add the event (tweet) to the corresponding lists
         for sink_id in event.sink_ids:
             self.sinks[sink_id].append(event)
+
+    def time_on_top(self):
+        """Returns how much time each source spent on the top."""
+        pass
+
+    def get_wall_rank(self, src_id, follower_ids):
+        """Return a dictionary of rank of the src_id on the wall of the
+        followers. If the follower does not have any events from the given
+        source, the corresponding rank is `None`.
+        """
+        rank = dict((sink_id, None) for sink_id in follower_ids)
+        for sink_id in follower_ids:
+            for ii in range(len(self.sinks[sink_id]) - 1, -1, -1):
+                if self.sinks[sink_id][ii].src_id == src_id:
+                    rank[sink_id] = len(self.sinks[sink_id]) - ii - 1
+                    break # breaks the inner for loop
+        return rank
 
 
 class Manager:
@@ -89,6 +108,8 @@ class Manager:
                                            src.src_id)
                                           for src in self.sources)[0]
 
+            assert t_delta >= 0, "Next event must be now or in the future."
+
             # Step 5: If cur_time + t_delta < end_time, go to step 4, else Step 7
             cur_time = self.state.time
             if cur_time + t_delta > end_time:
@@ -110,41 +131,73 @@ class Poisson:
     def __init__(self, src_id, rate=1.0):
         self.rate = rate
         self.src_id = src_id
-        self.last_time = None
+        self.last_event_time = None
         self.t_delta = None
 
     def init_state(self, state, follower_sink_ids):
         self.sink_ids = follower_sink_ids
         self.state = State.clone(state)
-        self.last_time = state.time
-        self.t_delta = Distr.expon.rvs(scale=1.0 / self.rate)
 
     def get_next_event_time(self, event):
         self.state.apply_event(event)
         cur_time = self.state.time
 
-        if cur_time >= self.last_time + self.t_delta:
+        # Assuming that all events will be executed at some point.
+        if event is None or event.src_id == self.src_id:
             self.t_delta = Distr.expon.rvs(scale=1.0 / self.rate)
-        else:
-            self.t_delta = last_time + self.t_delta - cur_time
-            
-        self.last_time = cur_time
+            self.last_event_time = cur_time
 
-        return self.t_delta
+        return self.last_event_time + self.t_delta - cur_time
 
 
 class Opt:
     def __init__(self, src_id, q=1.0, s=1.0):
         self.q = q
         self.s = s
+        self.src_id = src_id
+        self.last_event_time = None
+        self.u_delta = None
+        self.t_delta = None
 
     def init_state(self, state, follower_sink_ids):
         self.sink_ids = follower_sink_ids
-        self.state = state
+        self.state = State.clone(state)
 
     def get_next_event_time(self, event):
         self.state.apply_event(event)
-        # TODO: Do magic
+        cur_time = self.state.time
+
+        if event is None:
+            # Tweet immediately if this is the first event.
+            self.u_delta = None
+            self.t_delta = 0
+            self.last_event_time = cur_time
+        elif event.src_id == self.src_id:
+            # No need to tweet if we are on top of all walls
+            self.u_delta = None
+            self.t_delta = np.inf
+            self.last_event_time = cur_time
+        else:
+            # check status of all walls and find position in it.
+            wall_ranks = self.state.get_wall_rank(self.src_id, self.sink_ids)
+            assert len(wall_ranks) == 1, "Not implemented for multi follower case."
+
+            rate = np.sqrt(self.q / self.s) * wall_ranks[self.sink_ids[0]]
+
+            if self.u_delta is None:
+                # Have to draw the first sample
+                self.u_delta = np.random.rand()
+
+            # Now re-evaluate the t_delta since last event
+            self.t_delta = Distr.expon.ppf(self.u_delta, scale=1.0 / rate)
+
+        ret_t_delta = self.last_event_time + self.t_delta - cur_time
+
+        if ret_t_delta < 0:
+            print('returned t_delta = {} < 0, set to 0 instead.'.format(ret_t_delta), file=sys.stderr)
+            ret_t_delta = 0.0
+
+        return ret_t_delta
 
 
 m = Manager([1000], [Poisson(1, 1.0), Poisson(2, 1.0), Opt(3)])
