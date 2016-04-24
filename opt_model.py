@@ -248,6 +248,8 @@ class Hawkes(Broadcaster):
             return t_delta
 
 
+# TODO: Write a real-data reader/generator.
+
 
 
 m = Manager([1000], [Poisson(1, 1.0), Poisson(2, 1.0), Opt(3)])
