@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import sys
 import abc
-import itertools as I
 
 class Event:
     def __init__(self, event_id, time_delta, src_id, sink_ids, metadata=None):
@@ -54,15 +53,11 @@ class State:
         df['t'] = np.cumsum(df['time_delta'])
         return df
 
-
-    def time_on_top(self):
-        """Returns how much time each source spent on the top."""
-        pass
-
-    def get_wall_rank(self, src_id, follower_ids):
-        """Return a dictionary of rank of the src_id on the wall of the
-        followers. If the follower does not have any events from the given
-        source, the corresponding rank is `None`.
+    def get_wall_rank(self, src_id, follower_ids, dict_form=True):
+        """Return a dictionary or vectors of rank of the src_id on the wall of
+        the followers. If the follower does not have any events from the given
+        source, the corresponding rank is `None`. The resulting vector will
+        be formed after sorting the sink_ids.
         """
         rank = dict((sink_id, None) for sink_id in follower_ids)
         for sink_id in follower_ids:
@@ -70,7 +65,11 @@ class State:
                 if self.sinks[sink_id][ii].src_id == src_id:
                     rank[sink_id] = len(self.sinks[sink_id]) - ii - 1
                     break # breaks the inner for loop
-        return rank
+
+        if dict_form:
+            return rank
+        else:
+            return np.asarray([rank[sink_id] for sink_id in sorted(rank.keys())])
 
 
 class Manager:
@@ -156,7 +155,7 @@ class Broadcaster:
         self.last_self_event_time = None
 
     def init_state(self, start_time, all_sink_ids, follower_sink_ids):
-        self.sink_ids = follower_sink_ids
+        self.sink_ids = sorted(follower_sink_ids)
         self.state = State(start_time, all_sink_ids)
 
     def get_next_event_time(self, event):
@@ -202,24 +201,39 @@ class Opt(Broadcaster):
         super(Opt, self).__init__(src_id)
         self.q = q
         self.s = s
+        self.old_rate = 0
+
+    def init_state(self, start_time, all_sink_ids, follower_sink_ids):
+        super(Opt, self).init_state(start_time, all_sink_ids, follower_sink_ids)
+        if isinstance(self.q, dict):
+            self.q_vec = np.asarray(self.q[x]
+                                    for x in sorted(follower_sink_ids))
+        else:
+            # Assuming that the self.q is otherwise a scalar number.
+            self.q_vec = np.ones(len(follower_sink_ids), dtype=float) * self.q
 
     def get_next_interval(self, event):
         if event is None:
             # Tweet immediately if this is the first event.
+            self.old_rate = 0
             return 0
         elif event.src_id == self.src_id:
             # No need to tweet if we are on top of all walls
+            self.old_rate = 0
             return np.inf
         else:
             # check status of all walls and find position in it.
-            # wall_ranks = self.state.get_wall_rank(self.src_id, self.sink_ids)
-            # assert len(wall_ranks) == 1, "Not implemented for multi follower case."
+            r_t = self.state.get_wall_rank(self.src_id, self.sink_ids,
+                                           dict_form=False)
+            # assert wall_ranks.shape[0] == 1, "Not implemented for multi follower case."
 
-            # rate = np.sqrt(self.q / self.s) * wall_ranks[self.sink_ids[0]]
-            
-            # TODO: Reinstate some checks.
-            t_delta_new = Distr.expon.rvs(scale = np.sqrt(self.s / self.q))
+            new_rate = np.sqrt(self.q_vec / self.s).dot(r_t)
+            rate = new_rate - self.old_rate
+            self.old_rate = new_rate
+
+            t_delta_new = Distr.expon.rvs(scale = 1.0 / rate)
             cur_time = self.state.time
+
             if self.last_self_event_time + self.t_delta > cur_time + t_delta_new:
                 return cur_time + t_delta_new - self.last_self_event_time
 
