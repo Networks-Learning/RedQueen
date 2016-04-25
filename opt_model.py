@@ -188,7 +188,7 @@ class Broadcaster:
 
 class Poisson(Broadcaster):
     def __init__(self, src_id, rate=1.0):
-        super().__init__(src_id)
+        super(Poisson, self).__init__(src_id)
         self.rate = rate
 
     def get_next_interval(self, event):
@@ -199,38 +199,34 @@ class Poisson(Broadcaster):
 
 class Opt(Broadcaster):
     def __init__(self, src_id, q=1.0, s=1.0):
-        super().__init__(src_id)
+        super(Opt, self).__init__(src_id)
         self.q = q
         self.s = s
-        self.u_delta = None
 
     def get_next_interval(self, event):
         if event is None:
             # Tweet immediately if this is the first event.
-            self.u_delta = None
             return 0
         elif event.src_id == self.src_id:
             # No need to tweet if we are on top of all walls
-            self.u_delta = None
             return np.inf
         else:
             # check status of all walls and find position in it.
-            wall_ranks = self.state.get_wall_rank(self.src_id, self.sink_ids)
-            assert len(wall_ranks) == 1, "Not implemented for multi follower case."
+            # wall_ranks = self.state.get_wall_rank(self.src_id, self.sink_ids)
+            # assert len(wall_ranks) == 1, "Not implemented for multi follower case."
 
-            rate = np.sqrt(self.q / self.s) * wall_ranks[self.sink_ids[0]]
-
-            if self.u_delta is None:
-                # Draw a uniform random variable to invert
-                self.u_delta = np.random.rand()
-
-            # Now re-evaluate the t_delta since last event
-            return Distr.expon.ppf(self.u_delta, scale=1.0 / rate)
+            # rate = np.sqrt(self.q / self.s) * wall_ranks[self.sink_ids[0]]
+            
+            # TODO: Reinstate some checks.
+            t_delta_new = Distr.expon.rvs(scale = np.sqrt(self.s / self.q))
+            cur_time = self.state.time
+            if self.last_self_event_time + self.t_delta > cur_time + t_delta_new:
+                return cur_time + t_delta_new - self.last_self_event_time
 
 
 class Hawkes(Broadcaster):
     def __init__(self, src_id, l_0=1.0, alpha=1.0, beta=1.0):
-        super().__init__(src_id)
+        super(Hawkes, self).__init__(src_id)
         self.l_0   = 1.0
         self.alpha = 1.0
         self.beta  = 1.0
