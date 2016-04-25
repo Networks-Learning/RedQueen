@@ -207,15 +207,24 @@ class Hawkes(Broadcaster):
         self.beta  = 1.0
         self.prev_excitations = []
 
+    def get_rate(self, t):
+        """Returns the rate of current Hawkes at time `t`."""
+        return self.l_0 + \
+            self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
+                                     for s in self.prev_excitations]))
+
     def get_next_interval(self, event):
         t = self.state.time
         if event is None or event.src_id == self.src_id:
-            rate = self.l_0 + \
-                   self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
-                                            for s in self.prev_excitations]))
+            rate_bound = self.get_rate(t)
+            t_delta = 0
 
-            # TODO: Do rejection sampling.
-            t_delta = Distr.expon.rvs(scale=1.0 / rate)
+            # Ogata sampling for one t-delta
+            while True:
+                t_delta += Distr.expon.rvs(scale=1.0 / rate_bound)
+                if np.random.rand() < self.get_rate(t + t_delta) / rate_bound:
+                    break
+
             self.prev_excitations.append(t_delta)
             return t_delta
 
