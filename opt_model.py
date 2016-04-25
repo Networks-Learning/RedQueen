@@ -199,6 +199,27 @@ class Poisson(Broadcaster):
             return Distr.expon.rvs(scale=1.0 / self.rate)
 
 
+class Hawkes(Broadcaster):
+    def __init__(self, src_id, l_0=1.0, alpha=1.0, beta=1.0):
+        super(Hawkes, self).__init__(src_id)
+        self.l_0   = 1.0
+        self.alpha = 1.0
+        self.beta  = 1.0
+        self.prev_excitations = []
+
+    def get_next_interval(self, event):
+        t = self.state.time
+        if event is None or event.src_id == self.src_id:
+            rate = self.l_0 + \
+                   self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
+                                            for s in self.prev_excitations]))
+
+            # TODO: Do rejection sampling.
+            t_delta = Distr.expon.rvs(scale=1.0 / rate)
+            self.prev_excitations.append(t_delta)
+            return t_delta
+
+
 class Opt(Broadcaster):
     def __init__(self, src_id, q=1.0, s=1.0):
         super(Opt, self).__init__(src_id)
@@ -241,29 +262,7 @@ class Opt(Broadcaster):
                 return cur_time + t_delta_new - self.last_self_event_time
 
 
-class Hawkes(Broadcaster):
-    def __init__(self, src_id, l_0=1.0, alpha=1.0, beta=1.0):
-        super(Hawkes, self).__init__(src_id)
-        self.l_0   = 1.0
-        self.alpha = 1.0
-        self.beta  = 1.0
-        self.prev_excitations = []
-
-    def get_next_interval(self, event):
-        t = self.state.time
-        if event is None or event.src_id == self.src_id:
-            rate = self.l_0 + \
-                   self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
-                                            for s in self.prev_excitations]))
-
-            t_delta = Distr.expon.rvs(scale=1.0 / rate)
-            self.prev_excitations.append(t_delta)
-            return t_delta
-
-
 # TODO: Write a real-data reader/generator.
-
-
 
 m = Manager([1000], [Poisson(1, 1.0), Poisson(2, 1.0), Opt(3)])
 
