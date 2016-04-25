@@ -8,7 +8,6 @@ def is_sorted(x, ascending=True):
 
 def rank_of_src_in_df(df, src_id):
     """Calculates the rank of the src_id at each time instant in the list of events."""
-    # Assumption df is sorted by the time.
 
     assert is_sorted(df.t.values), "Array not sorted by time."
 
