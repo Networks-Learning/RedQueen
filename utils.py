@@ -18,4 +18,4 @@ def rank_of_src_in_df(df, src_id):
                      .transform(lambda x: range(0, len(x)) -
                                           np.maximum.accumulate(np.where(x == src_id, range(0, len(x)), 0)))
                      .astype(float))
-    return df2.pivot(index='t', columns='sink_id', values='rank').fillna(method='ffill')
+    return df2.pivot_table(index='t', columns='sink_id', values='rank').fillna(method='ffill')
