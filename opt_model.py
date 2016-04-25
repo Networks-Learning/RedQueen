@@ -8,9 +8,11 @@ import sys
 import abc
 
 class Event:
-    def __init__(self, event_id, time_delta, src_id, sink_ids, metadata=None):
+    def __init__(self, event_id, time_delta, cur_time,
+                 src_id, sink_ids, metadata=None):
         self.event_id   = event_id
         self.time_delta = time_delta
+        self.cur_time   = cur_time
         self.src_id     = src_id
         self.sink_ids   = sink_ids
         self.metadata   = metadata
@@ -46,11 +48,11 @@ class State:
             [{'event_id'   : x.event_id,
               'time_delta' : x.time_delta,
               'src_id'     : x.src_id,
+              't'          : x.cur_time,
               'sink_id'    : y}
              for x in self.events
              for y in x.sink_ids]
         )
-        df['t'] = np.cumsum(df['time_delta'])
         return df
 
     def get_wall_rank(self, src_id, follower_ids, dict_form=True):
@@ -132,7 +134,8 @@ class Manager:
                 break
 
             # Step 4: Execute the first event
-            last_event = Event(event_id, t_delta, next_src_id,
+            last_event = Event(event_id, t_delta,
+                               cur_time + t_delta, next_src_id,
                                [x[1] for x in self.edge_list
                                      if x[0] == next_src_id])
             event_id += 1
