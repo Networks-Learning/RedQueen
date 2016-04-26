@@ -275,6 +275,30 @@ class Opt(Broadcaster):
 
 # TODO: Write a real-data reader/generator.
 
+class RealData(Broadcaster):
+    def __init__(self, src_id, times):
+        super(RealData, self).__init__(src_id, 0)
+        self.times = np.asarray(times)
+        self.t_diff = np.diff(self.times)
+        self.start_idx = None
+
+    def init_state(self, start_time, all_sink_ids, follower_sink_ids):
+        super(RealData, self).init_state(start_time,
+                                         all_sink_ids,
+                                         follower_sink_ids)
+        self.start_idx = 0
+        while self.times[self.start_idx] < start_time:
+            self.start_idx += 1
+
+    def get_next_interval(self, event):
+        if event is None:
+            return self.t_diff[self.start_idx]
+        elif event.src_id == self.src_id:
+            self.start_idx += 1
+            assert self.times[self.start_idx] > event.cur, "Skipped a real event."
+            return self.t_diff[self.start_idx]
+
+
 m = Manager([1000], [Poisson(1, 1), Hawkes(2, 2), Opt(3, 3)])
 
 
