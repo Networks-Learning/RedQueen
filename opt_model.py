@@ -102,12 +102,7 @@ class Manager:
         self.state = State(0, sink_ids)
         self.sources = sources
 
-    def run_till(self, end_time, seed=42):
-        # TODO: This only makes runs correct on a single seed system.
-        # Will need to extend this to allow running this in a distributed
-        # manner.
-        np.random.seed(seed)
-
+    def run_till(self, end_time):
         # Step 1: Inform the sources of the sinks associated with them.
         # Step 2: Give them the initial state
         for src in self.sources:
@@ -152,8 +147,10 @@ class Manager:
 class Broadcaster:
     __metaclass__ = abc.ABCMeta
 
-    def __init__(self, src_id):
+    def __init__(self, src_id, seed):
         self.src_id = src_id
+        self.seed = seed
+        self.random_state = np.random.RandomState(seed)
         self.t_delta = None
         self.last_self_event_time = None
 
@@ -189,19 +186,20 @@ class Broadcaster:
 
 
 class Poisson(Broadcaster):
-    def __init__(self, src_id, rate=1.0):
-        super(Poisson, self).__init__(src_id)
+    def __init__(self, src_id, seed, rate=1.0):
+        super(Poisson, self).__init__(src_id, seed)
         self.rate = rate
 
     def get_next_interval(self, event):
         if event is None or event.src_id == self.src_id:
             # Draw a new time
-            return Distr.expon.rvs(scale=1.0 / self.rate)
+            return Distr.expon.rvs(scale=1.0 / self.rate,
+                                   random_state=self.random_state)
 
 
 class Hawkes(Broadcaster):
-    def __init__(self, src_id, l_0=1.0, alpha=1.0, beta=1.0):
-        super(Hawkes, self).__init__(src_id)
+    def __init__(self, src_id, seed, l_0=1.0, alpha=1.0, beta=1.0):
+        super(Hawkes, self).__init__(src_id, seed)
         self.l_0   = 1.0
         self.alpha = 1.0
         self.beta  = 1.0
@@ -211,7 +209,8 @@ class Hawkes(Broadcaster):
         """Returns the rate of current Hawkes at time `t`."""
         return self.l_0 + \
             self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
-                                     for s in self.prev_excitations]))
+                                     for s in self.prev_excitations
+                                     if s < t]))
 
     def get_next_interval(self, event):
         t = self.state.time
@@ -221,17 +220,19 @@ class Hawkes(Broadcaster):
 
             # Ogata sampling for one t-delta
             while True:
-                t_delta += Distr.expon.rvs(scale=1.0 / rate_bound)
-                if np.random.rand() < self.get_rate(t + t_delta) / rate_bound:
+                t_delta += Distr.expon.rvs(scale=1.0 / rate_bound,
+                                           random_state=self.random_state)
+                # Rejection sampling
+                if self.random_state.rand() < self.get_rate(t + t_delta) / rate_bound:
                     break
 
-            self.prev_excitations.append(t_delta)
+            self.prev_excitations.append(t + t_delta)
             return t_delta
 
 
 class Opt(Broadcaster):
-    def __init__(self, src_id, q=1.0, s=1.0):
-        super(Opt, self).__init__(src_id)
+    def __init__(self, src_id, seed, q=1.0, s=1.0):
+        super(Opt, self).__init__(src_id, seed)
         self.q = q
         self.s = s
         self.old_rate = 0
@@ -264,7 +265,8 @@ class Opt(Broadcaster):
             rate = new_rate - self.old_rate
             self.old_rate = new_rate
 
-            t_delta_new = Distr.expon.rvs(scale = 1.0 / rate)
+            t_delta_new = Distr.expon.rvs(scale = 1.0 / rate,
+                                          random_state=self.random_state)
             cur_time = self.state.time
 
             if self.last_self_event_time + self.t_delta > cur_time + t_delta_new:
@@ -273,6 +275,6 @@ class Opt(Broadcaster):
 
 # TODO: Write a real-data reader/generator.
 
-m = Manager([1000], [Poisson(1, 1.0), Poisson(2, 1.0), Opt(3)])
+m = Manager([1000], [Poisson(1, 1), Hawkes(2, 2), Opt(3, 3)])
 
 
