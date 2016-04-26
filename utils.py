@@ -1,7 +1,13 @@
 # Helper functions
 
+import matplotlib
+from matplotlib import pyplot as py
 import numpy as np
 import pandas as pd
+
+def def_q_vec(num_followers):
+    """Returns the default q_vec for the given number of followers."""
+    return np.ones(num_followers, dtype=float) / (num_followers ** 2)
 
 
 def is_sorted(x, ascending=True):
@@ -37,13 +43,66 @@ def u_int(df, src_id, end_time, q_vec=None, s=1.0, follower_ids=None):
         follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
 
     if q_vec is None:
-        q_vec = np.ones_like(follower_ids, dtype=float)
+        q_vec = def_q_vec(len(follower_ids))
 
     r_t = rank_of_src_in_df(df, src_id)
-    u_values = r_t[follower_ids].values.dot(q_vec)
+    u_values = r_t[follower_ids].values.dot(np.sqrt(q_vec / s))
     u_dt = np.diff(np.concatenate([r_t.index.values, [end_time]]))
 
     return np.sum(u_values * u_dt)
+
+
+def time_in_top_k(df, src_id, K, end_time, q_vec=None, s=1.0, follower_ids=None):
+    """Calculate ∫I(r(t) <= k)dt for the given src_id."""
+
+    if follower_ids is None:
+        follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
+
+    if q_vec is None:
+        q_vec = def_q_vec(len(follower_ids))
+
+    r_t = rank_of_src_in_df(df, src_id)
+    u_values = r_t[follower_ids].values.dot(np.sqrt(q_vec / s))
+    I_values = np.where(u_values <= K - 1, 1.0, 0.0)
+    I_dt = np.diff(np.concatenate([r_t.index.values, [end_time]]))
+
+    return np.sum(I_values * I_dt)
+
+
+def calc_loss_poisson(df, src_id, u_const, end_time,
+                      q_vec=None, s=1.0, follower_ids=None):
+    """Calculate the loss for the given source assuming that it was Poisson
+    with rate u_const."""
+
+    if follower_ids is None:
+        follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
+
+    if q_vec is None:
+        q_vec = def_q_vec(len(follower_ids))
+
+    r_t = rank_of_src_in_df(df, src_id)
+    q_t = 0.5 * np.square(r_t[follower_ids].values).dot(q_vec)
+    s_t = 0.5 * s * np.ones(r_t.shape[0], dtype=float) * (u_const ** 2)
+
+    return pd.Series(data=q_t + s_t, index=r_t.index)
+
+
+def calc_loss_opt(df, src_id, end_time,
+                  q_vec=None, s=1.0, follower_ids=None):
+    """Calculate the loss for the given source assuming that it was the
+    optimal broadcaster."""
+
+    if follower_ids is None:
+        follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
+
+    if q_vec is None:
+        q_vec = def_q_vec(len(follower_ids))
+
+    r_t = rank_of_src_in_df(df, src_id)
+    q_t = 0.5 * np.square(r_t[follower_ids].values).dot(q_vec)
+    s_t = q_t # For the optimal solution, the q_t is the same is s_t
+
+    return pd.Series(data=q_t + s_t, index=r_t.index)
 
 
 def oracle_ranking(df, K,
@@ -61,10 +120,10 @@ def oracle_ranking(df, K,
     if follower_ids is not None:
         df = sorted(df[df.sink_id.isin(follower_ids)])
     else:
-        follower_ids = df.sink_id.unique()
+        follower_ids = sorted(df.sink_id.unique())
 
     if q_vec is None:
-        q_vec = np.ones(len(follower_ids), dtype=float)
+        q_vec = def_q_vec(len(follower_ids))
 
     assert is_sorted(df.t.values), "Dataframe is not sorted by time."
 
@@ -80,7 +139,7 @@ def oracle_ranking(df, K,
     event_times = df.groupby('event_id').t.mean()
     event_ids = oracle_rank.index.values
 
-    r_values = oracle_rank[follower_ids].values.dot(np.sqrt(q_vec) / s)
+    r_values = oracle_rank[follower_ids].values.dot(np.sqrt(q_vec / s))
     r = pd.Series(data=r_values, index=event_ids)
 
     T = np.inf
@@ -100,3 +159,79 @@ def oracle_ranking(df, K,
         T = best_move[1]
 
     return oracle_event_times
+
+
+
+SPINE_COLOR = 'grey'
+def latexify(fig_width=None, fig_height=None, columns=1, largeFonts=False):
+    """Set up matplotlib's RC params for LaTeX plotting.
+    Call this before plotting a figure.
+
+    Parameters
+    ----------
+    fig_width : float, optional, inches
+    fig_height : float,  optional, inches
+    columns : {1, 2}
+    """
+
+    # code adapted from http://www.scipy.org/Cookbook/Matplotlib/LaTeX_Examples
+
+    # Width and max height in inches for IEEE journals taken from
+    # computer.org/cms/Computer.org/Journal%20templates/transactions_art_guide.pdf
+
+    assert(columns in [1,2])
+
+    if fig_width is None:
+        fig_width = 3.39 if columns == 1 else 6.9 # width in inches
+
+    if fig_height is None:
+        golden_mean = (np.sqrt(5)-1.0)/2.0    # Aesthetic ratio
+        fig_height = fig_width*golden_mean # height in inches
+
+    MAX_HEIGHT_INCHES = 8.0
+    if fig_height > MAX_HEIGHT_INCHES:
+        print("WARNING: fig_height too large:" + fig_height +
+              "so will reduce to" + MAX_HEIGHT_INCHES + "inches.")
+        fig_height = MAX_HEIGHT_INCHES
+
+    params = {'backend': 'ps',
+              'text.latex.preamble': ['\\usepackage{gensymb}'],
+              'axes.labelsize': 10 if largeFonts else 7, # fontsize for x and y labels (was 10)
+              'axes.titlesize': 10 if largeFonts else 7,
+              'font.size': 10 if largeFonts else 7, # was 10
+              'legend.fontsize': 10 if largeFonts else 7, # was 10
+              'xtick.labelsize': 10 if largeFonts else 7,
+              'ytick.labelsize': 10 if largeFonts else 7,
+              'text.usetex': True,
+              'figure.figsize': [fig_width,fig_height],
+              'font.family': 'serif',
+              'xtick.minor.size': 0.5,
+              'xtick.major.pad': 1.5,
+              'xtick.major.size': 1,
+              'ytick.minor.size': 0.5,
+              'ytick.major.pad': 1.5,
+              'ytick.major.size': 1
+    }
+
+    matplotlib.rcParams.update(params)
+    py.rcParams.update(params)
+
+
+def format_axes(ax):
+
+    for spine in ['top', 'right']:
+        ax.spines[spine].set_visible(False)
+
+    for spine in ['left', 'bottom']:
+        ax.spines[spine].set_color(SPINE_COLOR)
+        ax.spines[spine].set_linewidth(0.5)
+
+    ax.xaxis.set_ticks_position('bottom')
+    ax.yaxis.set_ticks_position('left')
+
+    for axis in [ax.xaxis, ax.yaxis]:
+        axis.set_tick_params(direction='out', color=SPINE_COLOR)
+
+    return ax
+
+
