@@ -294,10 +294,11 @@ def calc_q_capacity_iter(sim_opts, seeds=None, parallel=True):
 
     return capacities
 
+
 def sweep_s(sim_opts, capacity_cap, rel_tol=1e-2, verbose=False, s_init=1.0):
     # We know that on average, the ∫u(t)dt decreases with increasing 's'
 
-    # Step 1: Find the upper-bound by exponential increase
+    # Step 1: Find the upper/lower bound by exponential increase/decrease
     init_cap = calc_q_capacity_iter(sim_opts.update({ 's': s_init })).mean()
 
     if verbose:
@@ -306,23 +307,17 @@ def sweep_s(sim_opts, capacity_cap, rel_tol=1e-2, verbose=False, s_init=1.0):
     s = s_init
     if init_cap < capacity_cap:
         while calc_q_capacity_iter(sim_opts.update({ 's': s })).mean() < capacity_cap:
+            s_hi = s
             s /= 2.0
-
-    s_lo = s
-
-    if verbose:
-        logTime('s_lo = {}'.format(s_lo))
-
-    # Step 3: Find the lower-bound by exponential decrease
-    s = s_init
-    if init_cap > capacity_cap:
+            s_lo = s
+    else:
         while calc_q_capacity_iter(sim_opts.update({ 's': s })).mean() > capacity_cap:
+            s_lo = s
             s *= 2.0
-
-    s_hi = s
+            s_hi = s
 
     if verbose:
-        logTime('s_hi = {}'.format(s_hi))
+        logTime('s_hi = {}, s_lo = {}'.format(s_hi, s_lo))
 
     # Step 3: Keep bisecting on 's' until we arrive at a close enough solution.
     old_capacity = np.inf
