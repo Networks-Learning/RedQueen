@@ -270,7 +270,7 @@ def format_axes(ax):
 def q_int_worker(params):
     sim_opts, seed = params
     m = sim_opts.create_manager(seed)
-    m.run_till(sim_opts.end_time)
+    m.run()
     return u_int(m.state.get_dataframe(), sim_opts=sim_opts)
 
 
@@ -282,7 +282,7 @@ def calc_q_capacity_iter(sim_opts, seeds=None, parallel=True):
     if not parallel:
         for idx, seed in enumerate(seeds):
             m = sim_opts.create_manager(seed)
-            m.run_till(sim_opts.end_time)
+            m.run()
             capacities[idx] = u_int(m.state.get_dataframe(), sim_opts=sim_opts)
     else:
         num_workers = min(len(seeds), mp.cpu_count())
@@ -319,7 +319,7 @@ def sweep_s(sim_opts, capacity_cap, rel_tol=1e-2, verbose=False, s_init=1.0):
     if verbose:
         logTime('s_hi = {}, s_lo = {}'.format(s_hi, s_lo))
 
-    # Step 3: Keep bisecting on 's' until we arrive at a close enough solution.
+    # Step 2: Keep bisecting on 's' until we arrive at a close enough solution.
     old_capacity = np.inf
 
     while True:
@@ -340,6 +340,6 @@ def sweep_s(sim_opts, capacity_cap, rel_tol=1e-2, verbose=False, s_init=1.0):
         else:
             s_hi = s
 
-    # Step 4: Return
+    # Step 3: Return
     return s
 
