@@ -165,10 +165,10 @@ class Broadcaster:
     def init_state(self, start_time, all_sink_ids, follower_sink_ids):
         self.sink_ids = sorted(follower_sink_ids)
         self.state = State(start_time, all_sink_ids)
+        self.start_time = start_time
 
     def get_next_event_time(self, event):
-        self.state.apply_event(event)
-        cur_time = self.state.time
+        cur_time = event.cur_time if event is not None else self.start_time
 
         if event is None or event.src_id == self.src_id:
             self.last_self_event_time = cur_time
@@ -220,7 +220,7 @@ class Hawkes(Broadcaster):
                                      if s < t]))
 
     def get_next_interval(self, event):
-        t = self.state.time
+        t = event.cur_time
         if event is None or event.src_id == self.src_id:
             rate_bound = self.get_rate(t)
             t_delta = 0
@@ -254,6 +254,7 @@ class Opt(Broadcaster):
             self.q_vec = np.ones(len(follower_sink_ids), dtype=float) * self.q
 
     def get_next_interval(self, event):
+        self.state.apply_event(event)
         if event is None:
             # Tweet immediately if this is the first event.
             self.old_rate = 0
@@ -266,21 +267,22 @@ class Opt(Broadcaster):
             # check status of all walls and find position in it.
             r_t = self.state.get_wall_rank(self.src_id, self.sink_ids,
                                            dict_form=False)
-            # assert wall_ranks.shape[0] == 1, "Not implemented for multi follower case."
 
+            # TODO: If multiple walls are updated at the same time, should the
+            # drawing happen only once after all the updates have been applied
+            # or one at a time? Does that make a difference? Probably not. A
+            # lot more work if the events are sent one by one per wall, though.
             new_rate = np.sqrt(self.q_vec / self.s).dot(r_t)
-            rate = new_rate - self.old_rate
+            diff_rate = new_rate - self.old_rate
             self.old_rate = new_rate
 
-            t_delta_new = Distr.expon.rvs(scale = 1.0 / rate,
+            t_delta_new = Distr.expon.rvs(scale=1.0 / diff_rate,
                                           random_state=self.random_state)
-            cur_time = self.state.time
+            cur_time = event.cur_time
 
             if self.last_self_event_time + self.t_delta > cur_time + t_delta_new:
                 return cur_time + t_delta_new - self.last_self_event_time
 
-
-# TODO: Write a real-data reader/generator.
 
 class RealData(Broadcaster):
     def __init__(self, src_id, times):
