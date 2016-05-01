@@ -102,6 +102,10 @@ class Manager:
         self.state = State(0, sink_ids)
         self.sources = sources
 
+    def get_state(self):
+        """Returns the current state of the simulation."""
+        return self.state
+
     def run_till(self, end_time):
         # Step 1: Inform the sources of the sinks associated with them.
         # Step 2: Give them the initial state
@@ -116,7 +120,9 @@ class Manager:
             # Step 3: Generate one t_delta from each source and form the
             # event which is going to happen next.
 
-            # This step can be made parallel
+            # This step can be made parallel.
+            # If multiple events happen at the same time, then the ordering
+            # will still be deterministic: by the ID of the source.
             t_delta, next_src_id = sorted((src.get_next_event_time(last_event),
                                            src.src_id)
                                           for src in self.sources)[0]
@@ -143,6 +149,8 @@ class Manager:
 
 # Broadcasters
 ##############
+
+# TODO: Make Broadcasters serializable
 
 class Broadcaster:
     __metaclass__ = abc.ABCMeta
@@ -177,7 +185,6 @@ class Broadcaster:
 
         return ret_t_delta
 
-
     @abc.abstractmethod
     def get_next_interval(self):
         """Should return a number to replace the current time to next event or
@@ -192,7 +199,7 @@ class Poisson(Broadcaster):
 
     def get_next_interval(self, event):
         if event is None or event.src_id == self.src_id:
-            # Draw a new time
+            # Draw a new time, one event at a time
             return Distr.expon.rvs(scale=1.0 / self.rate,
                                    random_state=self.random_state)
 
@@ -231,9 +238,9 @@ class Hawkes(Broadcaster):
 
 
 class Opt(Broadcaster):
-    def __init__(self, src_id, seed, q=1.0, s=1.0):
+    def __init__(self, src_id, seed, q_vec=1.0, s=1.0):
         super(Opt, self).__init__(src_id, seed)
-        self.q = q
+        self.q = q_vec
         self.s = s
         self.old_rate = 0
 
@@ -282,23 +289,32 @@ class RealData(Broadcaster):
         self.t_diff = np.diff(self.times)
         self.start_idx = None
 
+    def get_num_events(self):
+        return len(self.times)
+
     def init_state(self, start_time, all_sink_ids, follower_sink_ids):
         super(RealData, self).init_state(start_time,
                                          all_sink_ids,
                                          follower_sink_ids)
         self.start_idx = 0
-        while self.times[self.start_idx] < start_time:
+        while self.start_idx < len(self.times) and self.times[self.start_idx] < start_time:
             self.start_idx += 1
 
     def get_next_interval(self, event):
         if event is None:
-            return self.t_diff[self.start_idx]
+            if len(self.t_diff) > self.start_idx:
+                return self.t_diff[self.start_idx]
+            else:
+                return np.inf
         elif event.src_id == self.src_id:
-            self.start_idx += 1
-            assert self.times[self.start_idx] > event.cur, "Skipped a real event."
-            return self.t_diff[self.start_idx]
+            if self.start_idx < len(self.t_diff):
+                self.start_idx += 1
+                assert self.times[self.start_idx] > event.cur, "Skipped a real event."
+                return self.t_diff[self.start_idx]
+            else:
+                return np.inf
 
 
-m = Manager([1000], [Poisson(1, 1), Hawkes(2, 2), Opt(3, 3)])
+# m = Manager([1000], [Poisson(1, 1), Hawkes(2, 2), Opt(3, 3)])
 
 
