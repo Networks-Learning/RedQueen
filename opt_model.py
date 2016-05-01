@@ -317,6 +317,53 @@ class RealData(Broadcaster):
                 return np.inf
 
 
-# m = Manager([1000], [Poisson(1, 1), Hawkes(2, 2), Opt(3, 3)])
+class SimOpts:
+    def __init__(self, **kwargs):
+        self.src_id = kwargs['src_id']
+        self.q_vec = kwargs['q_vec']
+        self.s = kwargs['s']
+        self.other_sources = kwargs['other_sources']
+        self.sink_ids = kwargs['sink_ids']
+        self.edge_list = kwargs['edge_list']
+        self.end_time = kwargs['end_time']
 
+    def create_manager(self, seed):
+        """Create a manager to run the simulation with the given seed."""
+        opt = Opt(src_id=self.src_id, seed=seed + 1, q_vec=self.q_vec, s=self.s)
+        return Manager(self.sink_ids, [opt] + self.other_sources, self.edge_list)
 
+    def get_dict(self):
+        """Returns dictionary form of the options."""
+        return {
+            'src_id': self.src_id,
+            'q_vec': self.q_vec,
+            's': self.s,
+            'other_sources': self.other_sources,
+            'sink_ids': self.sink_ids,
+            'edge_list': self.edge_list,
+            'end_time': self.end_time
+        }
+
+    def update(self, changes):
+        new_opts = self.get_dict()
+        new_opts.update(changes)
+        return SimOpts(**new_opts)
+
+def test_simOpts():
+    init_opts = {
+            'src_id': 1,
+            'end_time': 100.0,
+            'q_vec': np.array([1,2]),
+            's': 1.0,
+            'other_sources': [Poisson(2, 1), Poisson(3, 1)],
+            'sink_ids': [1001, 1000],
+            'edge_list': [(1, 1001), (1, 1000), (2, 1000), (3, 1001)]
+        }
+
+    s = SimOpts(**init_opts)
+    assert s.get_dict() == init_opts
+
+    s2 = s.update({ 'src_id': 2 })
+    assert s2.src_id == 2
+
+test_simOpts()
