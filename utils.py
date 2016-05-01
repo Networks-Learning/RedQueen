@@ -4,6 +4,18 @@ import matplotlib
 from matplotlib import pyplot as py
 import numpy as np
 import pandas as pd
+import sys
+import datetime as D
+
+
+def mb(val, default):
+    return val if val is not None else default
+
+
+def logTime(chkpoint):
+    print('*** \x1b[31m{}\x1b[0m Checkpoint: {}'.format(D.datetime.now(), chkpoint))
+    sys.stdout.flush()
+
 
 def def_q_vec(num_followers):
     """Returns the default q_vec for the given number of followers."""
@@ -36,46 +48,63 @@ def rank_of_src_in_df(df, src_id, fill=True, with_time=True):
     return pivot_ranks.fillna(method='ffill') if fill else pivot_ranks
 
 
-def u_int(df, src_id, end_time, q_vec=None, s=1.0, follower_ids=None):
+def u_int(df, src_id=None, end_time=None, q_vec=None, s=None,
+          follower_ids=None, sim_opts=None):
     """Calculate the ∫u(t)dt for the given src_id."""
 
-    if follower_ids is None:
-        follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
+    if sim_opts is not None:
+        src_id       = mb(src_id, sim_opts.src_id)
+        end_time     = mb(end_time, sim_opts.end_time)
+        q_vec        = mb(q_vec, sim_opts.q_vec)
+        s            = mb(s, sim_opts.s)
+        follower_ids = mb(follower_ids, sim_opts.sink_ids)
 
-    if q_vec is None:
-        q_vec = def_q_vec(len(follower_ids))
+    assert is_sorted(follower_ids)
 
-    r_t = rank_of_src_in_df(df, src_id)
+    r_t      = rank_of_src_in_df(df, src_id)
     u_values = r_t[follower_ids].values.dot(np.sqrt(q_vec / s))
-    u_dt = np.diff(np.concatenate([r_t.index.values, [end_time]]))
+    u_dt     = np.diff(np.concatenate([r_t.index.values, [end_time]]))
 
     return np.sum(u_values * u_dt)
 
 
-def time_in_top_k(df, src_id, K, end_time, q_vec=None, s=1.0, follower_ids=None):
+def time_in_top_k(df, src_id=None, K=None, end_time=None, q_vec=None, s=None,
+                  follower_ids=None, sim_opts=None):
     """Calculate ∫I(r(t) <= k)dt for the given src_id."""
 
-    if follower_ids is None:
-        follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
+    # if follower_ids is None:
+    #     follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
 
-    if q_vec is None:
-        q_vec = def_q_vec(len(follower_ids))
+    if sim_opts is not None:
+        src_id       = mb(src_id, sim_opts.src_id)
+        end_time     = mb(end_time, sim_opts.end_time)
+        q_vec        = mb(q_vec, sim_opts.q_vec)
+        s            = mb(s, sim_opts.s)
+        follower_ids = mb(follower_ids, sim_opts.sink_ids)
 
-    r_t = rank_of_src_in_df(df, src_id)
+    assert is_sorted(follower_ids)
+
+    r_t      = rank_of_src_in_df(df, src_id)
     u_values = r_t[follower_ids].values.dot(np.sqrt(q_vec / s))
     I_values = np.where(u_values <= K - 1, 1.0, 0.0)
-    I_dt = np.diff(np.concatenate([r_t.index.values, [end_time]]))
+    I_dt     = np.diff(np.concatenate([r_t.index.values, [end_time]]))
 
     return np.sum(I_values * I_dt)
 
 
-def calc_loss_poisson(df, src_id, u_const, end_time,
-                      q_vec=None, s=1.0, follower_ids=None):
+def calc_loss_poisson(df, u_const, src_id=None, end_time=None,
+                      q_vec=None, s=None, follower_ids=None, sim_opts=None):
     """Calculate the loss for the given source assuming that it was Poisson
     with rate u_const."""
 
-    if follower_ids is None:
-        follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
+    if sim_opts is not None:
+        src_id       = mb(src_id, sim_opts.src_id)
+        end_time     = mb(end_time, sim_opts.end_time)
+        q_vec        = mb(q_vec, sim_opts.q_vec)
+        s            = mb(s, sim_opts.s)
+        follower_ids = mb(follower_ids, sim_opts.sink_ids)
+
+    assert is_sorted(follower_ids)
 
     if q_vec is None:
         q_vec = def_q_vec(len(follower_ids))
