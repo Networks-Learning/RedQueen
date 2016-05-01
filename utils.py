@@ -134,62 +134,63 @@ def calc_loss_opt(df, src_id, end_time,
     return pd.Series(data=q_t + s_t, index=r_t.index)
 
 
-def oracle_ranking(df, K,
-                   omit_src_ids=None,
-                   follower_ids=None,
-                   q_vec=None,
-                   s=1.0):
-    """Returns the best places the oracle would have put events. Optionally, it
-    can remove sources, use a custom weight vector and have a custom list of
-    followers.."""
+# def oracle_ranking(df, K,
+#                    omit_src_ids=None,
+#                    follower_ids=None,
+#                    q_vec=None,
+#                    s=1.0):
+#     """Returns the best places the oracle would have put events. Optionally, it
+#     can remove sources, use a custom weight vector and have a custom list of
+#     followers.."""
+#
+#     if omit_src_ids is not None:
+#         df = df[~df.src_id.isin(omit_src_ids)]
+#
+#     if follower_ids is not None:
+#         df = sorted(df[df.sink_id.isin(follower_ids)])
+#     else:
+#         follower_ids = sorted(df.sink_id.unique())
+#
+#     if q_vec is None:
+#         q_vec = def_q_vec(len(follower_ids))
+#
+#     assert is_sorted(df.t.values), "Dataframe is not sorted by time."
+#
+#     # Find ∫r(t)dt if the Oracle had tweeted once in the beginning and then
+#     # had not tweeted ever afterwards.
+#
+#     # There will be some NaN till the point all the sources had tweeted.
+#     # Also, the ranks will start from 0. Fixing that:
+#     oracle_rank = rank_of_src_in_df(df, src_id=None, with_time=False).fillna(0)
+#
+#     # Though each event should have a unique time, we take the 'mean' to catch
+#     # bugs which may otherwise go unnoticed if we used .min or .first
+#     event_times = df.groupby('event_id').t.mean()
+#     event_ids = oracle_rank.index.values
+#
+#     r_values = oracle_rank[follower_ids].values.dot(np.sqrt(q_vec / s))
+#     r = pd.Series(data=r_values, index=event_ids)
+#
+#     T = np.inf
+#     oracle_event_times = [None] * K
+#     K_orig = K
+#
+#     while K > 0:
+#         all_moves = [(r[e_id] * (T - event_times[e_id]), event_times[e_id])
+#                      for e_id in event_times.index[event_times < T]]
+#         if len(all_moves) == 0:
+#             print('Ran out of moves after {} steps'.format(K_orig - K))
+#             break
+#
+#         best_move = sorted(all_moves, reverse=True)[0]
+#         K -= 1
+#         oracle_event_times[K] = best_move[1]
+#         T = best_move[1]
+#
+#     return oracle_event_times
 
-    if omit_src_ids is not None:
-        df = df[~df.src_id.isin(omit_src_ids)]
 
-    if follower_ids is not None:
-        df = sorted(df[df.sink_id.isin(follower_ids)])
-    else:
-        follower_ids = sorted(df.sink_id.unique())
-
-    if q_vec is None:
-        q_vec = def_q_vec(len(follower_ids))
-
-    assert is_sorted(df.t.values), "Dataframe is not sorted by time."
-
-    # Find ∫r(t)dt if the Oracle had tweeted once in the beginning and then
-    # had not tweeted ever afterwards.
-
-    # There will be some NaN till the point all the sources had tweeted.
-    # Also, the ranks will start from 0. Fixing that:
-    oracle_rank = rank_of_src_in_df(df, src_id=None, with_time=False).fillna(0)
-
-    # Though each event should have a unique time, we take the 'mean' to catch
-    # bugs which may otherwise go unnoticed if we used .min or .first
-    event_times = df.groupby('event_id').t.mean()
-    event_ids = oracle_rank.index.values
-
-    r_values = oracle_rank[follower_ids].values.dot(np.sqrt(q_vec / s))
-    r = pd.Series(data=r_values, index=event_ids)
-
-    T = np.inf
-    oracle_event_times = [None] * K
-    K_orig = K
-
-    while K > 0:
-        all_moves = [(r[e_id] * (T - event_times[e_id]), event_times[e_id])
-                     for e_id in event_times.index[event_times < T]]
-        if len(all_moves) == 0:
-            print('Ran out of moves after {} steps'.format(K_orig - K))
-            break
-
-        best_move = sorted(all_moves, reverse=True)[0]
-        K -= 1
-        oracle_event_times[K] = best_move[1]
-        T = best_move[1]
-
-    return oracle_event_times
-
-
+## LaTeX
 
 SPINE_COLOR = 'grey'
 def latexify(fig_width=None, fig_height=None, columns=1, largeFonts=False):
@@ -263,4 +264,87 @@ def format_axes(ax):
 
     return ax
 
+
+## Determining the q for a user
+
+def q_int_worker(params):
+    sim_opts, seed = params
+    m = sim_opts.create_manager(seed)
+    m.run_till(sim_opts.end_time)
+    return u_int(m.state.get_dataframe(), sim_opts=sim_opts)
+
+
+def calc_q_capacity_iter(sim_opts, seeds=None, parallel=True):
+    if seeds is None:
+        seeds = range(10)
+
+    capacities = np.zeros(len(seeds), dtype=float)
+    if not parallel:
+        for idx, seed in enumerate(seeds):
+            m = sim_opts.create_manager(seed)
+            m.run_till(sim_opts.end_time)
+            capacities[idx] = u_int(m.state.get_dataframe(), sim_opts=sim_opts)
+    else:
+        num_workers = min(len(seeds), mp.cpu_count())
+        with mp.Pool(num_workers) as pool:
+            for (idx, capacity) in \
+                enumerate(pool.imap_unordered(q_int_worker, [(sim_opts, x)
+                                                             for x in seeds])):
+                capacities[idx] = capacity
+
+    return capacities
+
+def sweep_s(sim_opts, capacity_cap, rel_tol=1e-2, verbose=False, s_init=1.0):
+    # We know that on average, the ∫u(t)dt decreases with increasing 's'
+
+    # Step 1: Find the upper-bound by exponential increase
+    init_cap = calc_q_capacity_iter(sim_opts.update({ 's': s_init })).mean()
+
+    if verbose:
+        logTime('Initial capacity = {}'.format(init_cap))
+
+    s = s_init
+    if init_cap < capacity_cap:
+        while calc_q_capacity_iter(sim_opts.update({ 's': s })).mean() < capacity_cap:
+            s /= 2.0
+
+    s_lo = s
+
+    if verbose:
+        logTime('s_lo = {}'.format(s_lo))
+
+    # Step 3: Find the lower-bound by exponential decrease
+    s = s_init
+    if init_cap > capacity_cap:
+        while calc_q_capacity_iter(sim_opts.update({ 's': s })).mean() > capacity_cap:
+            s *= 2.0
+
+    s_hi = s
+
+    if verbose:
+        logTime('s_hi = {}'.format(s_hi))
+
+    # Step 3: Keep bisecting on 's' until we arrive at a close enough solution.
+    old_capacity = np.inf
+
+    while True:
+        s = (s_hi + s_lo) / 2.0
+        new_capacity = calc_q_capacity_iter(sim_opts.update({ 's': s })).mean()
+
+        if verbose:
+            logTime('new_capacity = {}, s = {}'.format(new_capacity, s))
+
+        if abs(new_capacity - old_capacity) / old_capacity < rel_tol:
+            # Have converged
+            break
+        else:
+            old_capacity = new_capacity
+
+        if new_capacity > capacity_cap:
+            s_lo = s
+        else:
+            s_hi = s
+
+    # Step 4: Return
+    return s
 
