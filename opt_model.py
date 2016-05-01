@@ -7,6 +7,8 @@ import pandas as pd
 import sys
 import abc
 
+from utils import mb
+
 class Event:
     def __init__(self, event_id, time_delta, cur_time,
                  src_id, sink_ids, metadata=None):
@@ -75,9 +77,16 @@ class State:
 
 
 class Manager:
-    def __init__(self, sink_ids, sources, edge_list=None):
+    def __init__(self, sources, sink_ids=None, end_time=None,
+                 edge_list=None, sim_opts=None):
         """The edge_list defines the network.
         Default is that all sources are connected to all sinks."""
+
+        if sim_opts is not None:
+            # sources   = mb(sources, sim_opts.other_sources))
+            edge_list = mb(edge_list, sim_opts.edge_list)
+            sink_ids  = mb(sink_ids, sim_opts.sink_ids)
+            end_time  = mb(end_time, sim_opts.end_time)
 
         assert len(sources) > 0, "No sources."
         assert len(sink_ids) > 0, "No sinks."
@@ -97,21 +106,30 @@ class Manager:
             edge_sink_ids = set(x[1] for x in edge_list)
             assert edge_sink_ids.issubset(set(sink_ids)), "Unknown sinks in edge_list."
 
+        self.end_time  = end_time
         self.edge_list = edge_list
-        self.sink_ids = sink_ids
-        self.state = State(0, sink_ids)
-        self.sources = sources
+        self.sink_ids  = sink_ids
+        self.state     = State(0, sink_ids)
+        self.sources   = sources
 
     def get_state(self):
         """Returns the current state of the simulation."""
         return self.state
 
-    def run_till(self, end_time):
+    def run(self):
+        self.run_till()
+
+    def run_till(self, end_time=None):
+        if end_time is not None:
+            print('Warning: deprecation warning: end_time should not be set.')
+        else:
+            end_time = self.end_time
+
         # Step 1: Inform the sources of the sinks associated with them.
         # Step 2: Give them the initial state
         for src in self.sources:
             follower_ids = [x[1] for x in self.edge_list if x[0] == src.src_id]
-            src.init_state(self.state.time, self.sink_ids, follower_ids)
+            src.init_state(self.state.time, self.sink_ids, follower_ids, end_time)
 
         last_event = None
         event_id = 100
@@ -156,16 +174,18 @@ class Broadcaster:
     __metaclass__ = abc.ABCMeta
 
     def __init__(self, src_id, seed):
-        self.src_id = src_id
-        self.seed = seed
-        self.random_state = np.random.RandomState(seed)
-        self.t_delta = None
+        self.src_id               = src_id
+        self.seed                 = seed
+        self.random_state         = np.random.RandomState(seed)
+        self.t_delta              = None
+        self.end_time             = None
         self.last_self_event_time = None
 
-    def init_state(self, start_time, all_sink_ids, follower_sink_ids):
-        self.sink_ids = sorted(follower_sink_ids)
-        self.state = State(start_time, all_sink_ids)
+    def init_state(self, start_time, all_sink_ids, follower_sink_ids, end_time):
+        self.sink_ids   = sorted(follower_sink_ids)
+        self.state      = State(start_time, all_sink_ids)
         self.start_time = start_time
+        self.end_time   = end_time
 
     def get_next_event_time(self, event):
         cur_time = event.cur_time if event is not None else self.start_time
@@ -190,6 +210,40 @@ class Broadcaster:
         """Should return a number to replace the current time to next event or
            None if no change should be made."""
         raise NotImplemented()
+
+
+class Poisson2(Broadcaster):
+    def __init__(self, src_id, seed, rate=1.0):
+        super(Poisson2, self).__init__(src_id, seed)
+        self.rate      = rate
+        self.init      = False
+        self.times     = None
+        self.t_diff    = None
+        self.start_idx = None
+
+    def get_next_interval(self, event):
+        if not self.init:
+            self.init      = True
+            duration       = self.end_time - self.start_time
+            num_events     = self.random_state.poisson(self.rate * duration)
+            event_times    = self.random_state.uniform(low=self.start_time,
+                                                       high=self.end_time,
+                                                       size=num_events)
+            self.times     = sorted(np.concatenate([[self.start_time], event_times]))
+            self.t_diff    = np.diff(self.times)
+            self.start_idx = 0
+
+        if event is None:
+            return self.t_diff[0]
+        elif event.src_id == self.src_id:
+            # Re-use times drawn before
+            self.start_idx += 1
+            if self.start_idx < len(self.t_diff):
+                assert self.times[self.start_idx] <= event.cur_time
+                assert self.times[self.start_idx + 1] > event.cur_time
+                return self.t_diff[self.start_idx]
+            else:
+                return np.inf
 
 
 class Poisson(Broadcaster):
@@ -243,18 +297,20 @@ class Opt(Broadcaster):
         self.q = q_vec
         self.s = s
         self.old_rate = 0
-
-    def init_state(self, start_time, all_sink_ids, follower_sink_ids):
-        super(Opt, self).init_state(start_time, all_sink_ids, follower_sink_ids)
-        if isinstance(self.q, dict):
-            self.q_vec = np.asarray(self.q[x]
-                                    for x in sorted(follower_sink_ids))
-        else:
-            # Assuming that the self.q is otherwise a scalar number.
-            self.q_vec = np.ones(len(follower_sink_ids), dtype=float) * self.q
+        self.init = False
 
     def get_next_interval(self, event):
         self.state.apply_event(event)
+
+        if not self.init:
+            self.init = True
+            if isinstance(self.q, dict):
+                self.q_vec = np.asarray(self.q[x]
+                                        for x in sorted(self.sink_ids))
+            else:
+                # Assuming that the self.q is otherwise a scalar number.
+                self.q_vec = np.ones(len(self.sink_ids), dtype=float) * self.q
+
         if event is None:
             # Tweet immediately if this is the first event.
             self.old_rate = 0
@@ -319,29 +375,29 @@ class RealData(Broadcaster):
 
 class SimOpts:
     def __init__(self, **kwargs):
-        self.src_id = kwargs['src_id']
-        self.q_vec = kwargs['q_vec']
-        self.s = kwargs['s']
+        self.src_id        = kwargs['src_id']
+        self.q_vec         = kwargs['q_vec']
+        self.s             = kwargs['s']
         self.other_sources = kwargs['other_sources']
-        self.sink_ids = kwargs['sink_ids']
-        self.edge_list = kwargs['edge_list']
-        self.end_time = kwargs['end_time']
+        self.sink_ids      = kwargs['sink_ids']
+        self.edge_list     = kwargs['edge_list']
+        self.end_time      = kwargs['end_time']
 
     def create_manager(self, seed):
         """Create a manager to run the simulation with the given seed."""
         opt = Opt(src_id=self.src_id, seed=seed + 1, q_vec=self.q_vec, s=self.s)
-        return Manager(self.sink_ids, [opt] + self.other_sources, self.edge_list)
+        return Manager(sim_opts=self, sources=[opt] + self.other_sources)
 
     def get_dict(self):
         """Returns dictionary form of the options."""
         return {
-            'src_id': self.src_id,
-            'q_vec': self.q_vec,
-            's': self.s,
-            'other_sources': self.other_sources,
-            'sink_ids': self.sink_ids,
-            'edge_list': self.edge_list,
-            'end_time': self.end_time
+            'src_id'        : self.src_id,
+            'q_vec'         : self.q_vec,
+            's'             : self.s,
+            'other_sources' : self.other_sources,
+            'sink_ids'      : self.sink_ids,
+            'edge_list'     : self.edge_list,
+            'end_time'      : self.end_time
         }
 
     def update(self, changes):
@@ -351,13 +407,13 @@ class SimOpts:
 
 def test_simOpts():
     init_opts = {
-            'src_id': 1,
-            'end_time': 100.0,
-            'q_vec': np.array([1,2]),
-            's': 1.0,
-            'other_sources': [Poisson(2, 1), Poisson(3, 1)],
-            'sink_ids': [1001, 1000],
-            'edge_list': [(1, 1001), (1, 1000), (2, 1000), (3, 1001)]
+            'src_id'        : 1,
+            'end_time'      : 100.0,
+            'q_vec'         : np.array([1,2]),
+            's'             : 1.0,
+            'other_sources' : [Poisson(2, 1), Poisson(3, 1)],
+            'sink_ids'      : [1001, 1000],
+            'edge_list'     : [(1, 1001), (1, 1000), (2, 1000), (3, 1001)]
         }
 
     s = SimOpts(**init_opts)
