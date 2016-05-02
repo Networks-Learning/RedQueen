@@ -2,6 +2,7 @@
 
 import matplotlib
 from matplotlib import pyplot as py
+import multiprocessing as mp
 import numpy as np
 import pandas as pd
 import sys
@@ -24,7 +25,7 @@ def def_q_vec(num_followers):
 
 def is_sorted(x, ascending=True):
     """Determines if a given numpy.array-like is sorted in ascending order."""
-    return np.all((np.diff(x) * 1.0 if ascending else -1.0) >= 0)
+    return np.all((np.diff(x) * (1.0 if ascending else -1.0) >= 0))
 
 
 def rank_of_src_in_df(df, src_id, fill=True, with_time=True):
@@ -48,9 +49,10 @@ def rank_of_src_in_df(df, src_id, fill=True, with_time=True):
     return pivot_ranks.fillna(method='ffill') if fill else pivot_ranks
 
 
-def u_int(df, src_id=None, end_time=None, q_vec=None, s=None,
-          follower_ids=None, sim_opts=None):
-    """Calculate the ∫u(t)dt for the given src_id."""
+def u_int_opt(df, src_id=None, end_time=None, q_vec=None, s=None,
+              follower_ids=None, sim_opts=None):
+    """Calculate the ∫u(t)dt for the given src_id assuming that the broadcaster
+    was following the optimal strategy."""
 
     if sim_opts is not None:
         src_id       = mb(src_id, sim_opts.src_id)
@@ -59,7 +61,10 @@ def u_int(df, src_id=None, end_time=None, q_vec=None, s=None,
         s            = mb(s, sim_opts.s)
         follower_ids = mb(follower_ids, sim_opts.sink_ids)
 
-    assert is_sorted(follower_ids)
+    if follower_ids is None:
+        follower_ids = sorted(df.sink_id[df.src_id == src_id].unique())
+    else:
+        assert is_sorted(follower_ids)
 
     r_t      = rank_of_src_in_df(df, src_id)
     u_values = r_t[follower_ids].values.dot(np.sqrt(q_vec / s))
@@ -288,8 +293,8 @@ def calc_q_capacity_iter(sim_opts, seeds=None, parallel=True):
         num_workers = min(len(seeds), mp.cpu_count())
         with mp.Pool(num_workers) as pool:
             for (idx, capacity) in \
-                enumerate(pool.imap_unordered(q_int_worker, [(sim_opts, x)
-                                                             for x in seeds])):
+                enumerate(pool.imap(q_int_worker, [(sim_opts, x)
+                                                   for x in seeds])):
                 capacities[idx] = capacity
 
     return capacities
