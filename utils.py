@@ -276,7 +276,7 @@ def q_int_worker(params):
     sim_opts, seed = params
     m = sim_opts.create_manager(seed)
     m.run()
-    return u_int(m.state.get_dataframe(), sim_opts=sim_opts)
+    return u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
 
 
 def calc_q_capacity_iter(sim_opts, seeds=None, parallel=True):
@@ -288,7 +288,7 @@ def calc_q_capacity_iter(sim_opts, seeds=None, parallel=True):
         for idx, seed in enumerate(seeds):
             m = sim_opts.create_manager(seed)
             m.run()
-            capacities[idx] = u_int(m.state.get_dataframe(), sim_opts=sim_opts)
+            capacities[idx] = u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
     else:
         num_workers = min(len(seeds), mp.cpu_count())
         with mp.Pool(num_workers) as pool:
