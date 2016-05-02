@@ -386,9 +386,9 @@ class SimOpts:
         self.edge_list     = kwargs['edge_list']
         self.end_time      = kwargs['end_time']
 
-    def create_manager(self, seed):
+    def create_manager_with_opt(self, seed):
         """Create a manager to run the simulation with the given seed."""
-        opt = Opt(src_id=self.src_id, seed=seed + 1, q_vec=self.q_vec, s=self.s)
+        opt = Opt(src_id=self.src_id, seed=seed, q_vec=self.q_vec, s=self.s)
         return Manager(sim_opts=self, sources=[opt] + self.other_sources)
 
     def get_dict(self):
