@@ -188,7 +188,7 @@ class Broadcaster:
         self.end_time   = end_time
 
     def get_next_event_time(self, event):
-        cur_time = event.cur_time if event is not None else self.start_time
+        cur_time = self.get_current_time(event)
 
         if event is None or event.src_id == self.src_id:
             self.last_self_event_time = cur_time
@@ -204,6 +204,9 @@ class Broadcaster:
             ret_t_delta = 0.0
 
         return ret_t_delta
+
+    def get_current_time(self, event):
+        return event.cur_time if event is not None else self.start_time
 
     @abc.abstractmethod
     def get_next_interval(self):
@@ -274,7 +277,7 @@ class Hawkes(Broadcaster):
                                      if s < t]))
 
     def get_next_interval(self, event):
-        t = event.cur_time
+        t = self.get_current_time(event)
         if event is None or event.src_id == self.src_id:
             rate_bound = self.get_rate(t)
             t_delta = 0
