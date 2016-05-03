@@ -90,8 +90,7 @@ def time_in_top_k(df, K, src_id=None, end_time=None, q_vec=None, s=None,
     assert is_sorted(follower_ids)
 
     r_t      = rank_of_src_in_df(df, src_id)
-    u_values = r_t[follower_ids].values.dot(np.sqrt(q_vec / s))
-    I_values = np.where(u_values <= K - 1, 1.0, 0.0)
+    I_values = np.where(r_t.mean(1) <= K - 1, 1.0, 0.0)
     I_dt     = np.diff(np.concatenate([r_t.index.values, [end_time]]))
 
     return np.sum(I_values * I_dt)
