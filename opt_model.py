@@ -439,6 +439,17 @@ class SimOpts:
         new_opts.update(changes)
         return SimOpts(**new_opts)
 
+    @staticmethod
+    def std_poisson(world_seed, world_rate):
+        """Returns a new SimOpts with fresh sources and default initialization."""
+        return SimOpts(src_id=1,
+                       other_sources=[Poisson2(src_id=2, seed=world_seed, rate=world_rate)],
+                       end_time=100.0,
+                       sink_ids=[1001],
+                       q_vec=np.asarray([1.0]),
+                       s=1.0,
+                       edge_list=[(1, 1001), (2, 1001)])
+
 def test_simOpts():
     init_opts = {
             'src_id'        : 1,
