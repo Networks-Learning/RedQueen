@@ -73,7 +73,7 @@ def u_int_opt(df, src_id=None, end_time=None, q_vec=None, s=None,
     return np.sum(u_values * u_dt)
 
 
-def time_in_top_k(df, src_id=None, K=None, end_time=None, q_vec=None, s=None,
+def time_in_top_k(df, K, src_id=None, end_time=None, q_vec=None, s=None,
                   follower_ids=None, sim_opts=None):
     """Calculate ∫I(r(t) <= k)dt for the given src_id."""
 
