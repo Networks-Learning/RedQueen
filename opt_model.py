@@ -117,7 +117,7 @@ class Manager:
         return self.state
 
     def run(self):
-        self.run_till()
+        return self.run_till()
 
     def run_till(self, end_time=None):
         if end_time is not None:
@@ -128,6 +128,10 @@ class Manager:
         # Step 1: Inform the sources of the sinks associated with them.
         # Step 2: Give them the initial state
         for src in self.sources:
+            if not src.is_fresh():
+                raise ValueError('Source with id: {} is not fresh.'
+                                 .format(src.src_id))
+
             follower_ids = [x[1] for x in self.edge_list if x[0] == src.src_id]
             src.init_state(self.state.time, self.sink_ids, follower_ids, end_time)
 
@@ -163,6 +167,7 @@ class Manager:
             # Step 6: Go to step 3
 
         # Step 7: Stop
+        return self
 
 
 # Broadcasters
@@ -180,6 +185,7 @@ class Broadcaster:
         self.t_delta              = None
         self.end_time             = None
         self.last_self_event_time = None
+        self.used                 = False
 
     def init_state(self, start_time, all_sink_ids, follower_sink_ids, end_time):
         self.sink_ids   = sorted(follower_sink_ids)
@@ -187,8 +193,14 @@ class Broadcaster:
         self.start_time = start_time
         self.end_time   = end_time
 
+    def is_fresh(self):
+        """Returns true if the source is fresh and ready to be used, False
+        if the next event times have already been requested once."""
+        return not self.used
+
     def get_next_event_time(self, event):
         cur_time = self.get_current_time(event)
+        self.used = True
 
         if event is None or event.src_id == self.src_id:
             self.last_self_event_time = cur_time
@@ -211,7 +223,7 @@ class Broadcaster:
     @abc.abstractmethod
     def get_next_interval(self):
         """Should return a number to replace the current time to next event or
-           None if no change should be made."""
+        None if no change should be made."""
         raise NotImplemented()
 
 
@@ -377,6 +389,7 @@ class RealData(Broadcaster):
 
 
 class SimOpts:
+    """This class holds the options with methods which can return a manager for running the simulation."""
     def __init__(self, **kwargs):
         self.src_id        = kwargs['src_id']
         self.q_vec         = kwargs['q_vec']
