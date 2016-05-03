@@ -400,9 +400,27 @@ class SimOpts:
         self.end_time      = kwargs['end_time']
 
     def create_manager_with_opt(self, seed):
-        """Create a manager to run the simulation with the given seed."""
+        """Create a manager to run the simulation with Optimal broadcaster as
+        one of the sources with the given seed."""
         opt = Opt(src_id=self.src_id, seed=seed, q_vec=self.q_vec, s=self.s)
         return Manager(sim_opts=self, sources=[opt] + self.other_sources)
+
+    def create_manager_with_poisson(self, seed, rate=None, capacity=None):
+        """Create a manager to run the simulation with the given seed and the
+        one source as Poisson with the provided capacity or rate.
+        Only one of the two should be specified."""
+
+        if rate is None and capacity is None:
+            raise ValueError('One of rate or capacity must be specified.')
+        elif rate is None:
+            rate = capacity / self.end_time
+        elif capacity is None:
+            pass
+        else:
+            raise ValueError('Only one of rate or capacity must be specified.')
+
+        poisson = Poisson2(src_id=self.src_id, seed=seed, rate=rate)
+        return Manager(sim_opts=self, sources=[poisson] + self.other_sources)
 
     def get_dict(self):
         """Returns dictionary form of the options."""
