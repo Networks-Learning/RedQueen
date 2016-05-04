@@ -388,6 +388,9 @@ class RealData(Broadcaster):
                 return np.inf
 
 
+# TODO: This should not contain objects which can have state.
+# This should only contain immutable objects and there should be a dynamic
+# Broadcaster creator elsewhere.
 class SimOpts:
     """This class holds the options with methods which can return a manager for running the simulation."""
     def __init__(self, **kwargs):
@@ -421,6 +424,13 @@ class SimOpts:
 
         poisson = Poisson2(src_id=self.src_id, seed=seed, rate=rate)
         return Manager(sim_opts=self, sources=[poisson] + self.other_sources)
+
+    def create_manager_for_wall(self):
+        """This generates the tweets of the rest of the other_sources only.
+        Useful for heuristics or oracle."""
+        edge_list = [x for x in self.edge_list if x[0] != self.src_id]
+        return Manager(sim_opts=self.update({ 'edge_list': edge_list }),
+                       sources=self.other_sources)
 
     def get_dict(self):
         """Returns dictionary form of the options."""
