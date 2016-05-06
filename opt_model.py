@@ -276,11 +276,11 @@ class Poisson(Broadcaster):
 
 
 class Hawkes(Broadcaster):
-    def __init__(self, src_id, seed, l_0=1.0, alpha=1.0, beta=1.0):
+    def __init__(self, src_id, seed, l_0=1.0, alpha=1.0, beta=10.0):
         super(Hawkes, self).__init__(src_id, seed)
-        self.l_0   = 1.0
-        self.alpha = 1.0
-        self.beta  = 1.0
+        self.l_0   = l_0
+        self.alpha = alpha
+        self.beta  = beta
         self.prev_excitations = []
 
     def get_rate(self, t):
@@ -449,9 +449,8 @@ class RealData(Broadcaster):
                 return np.inf
 
 
-# TODO: This should not contain objects which can have state.
-# This should only contain immutable objects and there should be a dynamic
-# Broadcaster creator elsewhere.
+# This should only contain immutable objects and create mutable objects on
+# demand.
 class SimOpts:
     """This class holds the options with methods which can return a manager for running the simulation."""
     def __init__(self, **kwargs):
@@ -536,11 +535,46 @@ class SimOpts:
                                        {'src_id': 2,
                                         'seed': world_seed,
                                         'rate': world_rate})],
-                       end_time=100.0,
+                       end_time=1.0,
                        sink_ids=[1001],
                        q_vec=np.asarray([1.0]),
                        s=1.0,
                        edge_list=[(1, 1001), (2, 1001)])
+
+    @staticmethod
+    def std_hawkes(world_seed, world_lambda_0, world_alpha, world_beta):
+        """Returns a new SimOpts with a Hawkes wall model."""
+        assert world_alpha / world_beta <= 1.0, "The Hawkes wall will explode."
+
+        return SimOpts(src_id=1,
+                       other_sources=[(Hawkes,
+                                       {'src_id': 2,
+                                        'seed': world_seed,
+                                        'l_0': world_lambda_0,
+                                        'alpha': world_alpha,
+                                        'beta': world_beta})],
+                       end_time=1.0,
+                       sink_ids=[1001],
+                       q_vec=np.asarray([1.0]),
+                       s=1.0,
+                       edge_list=[(1, 1001), (2, 1001)])
+
+    @staticmethod
+    def std_piecewise_const(world_seed, world_change_times, world_rates):
+        """Returns a new SimOpts with a Piecewise constant wall model."""
+        return SimOpts(src_id=1,
+                       other_sources=[(PiecewiseConst,
+                                       {'src_id': 2,
+                                        'seed': world_seed,
+                                        'change_times': world_change_times,
+                                        'rates': world_rates})],
+                       end_time=1.0,
+                       sink_ids=[1001],
+                       q_vec=np.asarray([1.0]),
+                       s=1.0,
+                       edge_list=[(1, 1001), (2, 1001)])
+
+
 
 def test_simOpts():
     init_opts = {
