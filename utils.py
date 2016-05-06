@@ -221,13 +221,14 @@ def get_oracle_df(sim_opts, with_cost=False):
     wall_mgr.run()
     oracle_df, cost = oracle_ranking(df=wall_mgr.state.get_dataframe(),
                                      sim_opts=sim_opts)
+
     if with_cost:
         return oracle_df, cost
     else:
         return oracle_df
 
 
-def find_opt_oracle(target_events, sim_opts, tol=1e-1, verbose=False):
+def find_opt_oracle(target_events, sim_opts, tol=1e-2, verbose=False):
     """Sweep the 's' parameter and get the best run of the oracle."""
     s_hi, s_init, s_lo = 1.0 * 2, 1.0, 1.0 / 2
 
@@ -272,7 +273,9 @@ def find_opt_oracle(target_events, sim_opts, tol=1e-1, verbose=False):
         if verbose:
             logTime('s_try = {}, events = {}, cost = {}'.format(s_try, opt_events, cost))
 
-        if np.abs(opt_events - target_events) / (target_events * 1.0) < tol:
+        if np.abs(opt_events - target_events) / (target_events * 1.0) < tol or \
+            (opt_events == np.ceil(target_events)) or \
+            (opt_events == np.floor(target_events)):
             return {
                 's': s_try,
                 'cost': cost,
