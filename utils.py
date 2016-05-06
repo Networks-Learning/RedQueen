@@ -210,6 +210,7 @@ def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
         'ranks'   : oracle_ranks,
         'events'  : u_star,
         'at'      : np.concatenate([[0.0], event_times.values]),
+        't'       : np.concatenate([[0.0], event_times.values]),
         't_delta' : w[1:]
     })
 
