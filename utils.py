@@ -229,12 +229,12 @@ def get_oracle_df(sim_opts, with_cost=False):
         return oracle_df
 
 
-def find_opt_oracle(target_events, sim_opts_generator, tol=1e-1, verbose=False):
+def find_opt_oracle(target_events, sim_opts, tol=1e-1, verbose=False):
     """Sweep the 's' parameter and get the best run of the oracle."""
     s_hi, s_init, s_lo = 1.0 * 2, 1.0, 1.0 / 2
 
     def oracle_num_events(s):
-        oracle_df = get_oracle_df(sim_opts_generator().update({ 's': s }))
+        oracle_df = get_oracle_df(sim_opts.update({ 's': s }))
         return oracle_df.events.sum()
 
     num_events = oracle_num_events(s_init)
@@ -267,7 +267,7 @@ def find_opt_oracle(target_events, sim_opts_generator, tol=1e-1, verbose=False):
 
     while True:
         s_try = (s_lo + s_hi) / 2.0
-        oracle_df, cost = get_oracle_df(sim_opts_generator().update({ 's': s_try }),
+        oracle_df, cost = get_oracle_df(sim_opts.update({ 's': s_try }),
                                         with_cost=True)
         opt_events = oracle_df.events.sum()
 
@@ -286,13 +286,13 @@ def find_opt_oracle(target_events, sim_opts_generator, tol=1e-1, verbose=False):
             s_lo = s_try
 
 
-def find_opt_oracle_s(target_events, sim_opts_generator, tol=1e-1, verbose=False):
-    res = find_opt_oracle(target_events, sim_opts_generator, tol, verbose)
+def find_opt_oracle_s(target_events, sim_opts, tol=1e-1, verbose=False):
+    res = find_opt_oracle(target_events, sim_opts, tol, verbose)
     return res['s']
 
 
-def find_opt_oracle_time_top_k(target_events, K, sim_opts_generator, tol=1e-1, verbose=False):
-    res = find_opt_oracle(target_events, sim_opts_generator, tol, verbose)
+def find_opt_oracle_time_top_k(target_events, K, sim_opts, tol=1e-1, verbose=False):
+    res = find_opt_oracle(target_events, sim_opts, tol, verbose)
     df = res['df']
     return np.sum(df.t_delta[df.ranks <= K - 1])
 

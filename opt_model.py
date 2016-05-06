@@ -402,11 +402,16 @@ class SimOpts:
         self.edge_list     = kwargs['edge_list']
         self.end_time      = kwargs['end_time']
 
+    def create_other_sources(self):
+        """Instantiates the other_sources."""
+        return [x[0](**x[1]) for x in self.other_sources]
+
     def create_manager_with_opt(self, seed):
         """Create a manager to run the simulation with Optimal broadcaster as
         one of the sources with the given seed."""
         opt = Opt(src_id=self.src_id, seed=seed, q_vec=self.q_vec, s=self.s)
-        return Manager(sim_opts=self, sources=[opt] + self.other_sources)
+        return Manager(sim_opts=self,
+                       sources=[opt] + self.create_other_sources())
 
     def create_manager_with_poisson(self, seed, rate=None, capacity=None):
         """Create a manager to run the simulation with the given seed and the
@@ -423,14 +428,27 @@ class SimOpts:
             raise ValueError('Only one of rate or capacity must be specified.')
 
         poisson = Poisson2(src_id=self.src_id, seed=seed, rate=rate)
-        return Manager(sim_opts=self, sources=[poisson] + self.other_sources)
+        return Manager(sim_opts=self,
+                       sources=[poisson] + self.create_other_sources())
 
     def create_manager_for_wall(self):
         """This generates the tweets of the rest of the other_sources only.
         Useful for heuristics or oracle."""
         edge_list = [x for x in self.edge_list if x[0] != self.src_id]
         return Manager(sim_opts=self.update({ 'edge_list': edge_list }),
-                       sources=self.other_sources)
+                       sources=self.create_other_sources())
+
+    def create_manager_for_piecewise_const(self, seed, change_times, rates):
+        """This returns a manager which runs the simulation with a piece-wise
+        constant broadcaster and the other sources."""
+        assert len(change_times) == len(rates)
+        piecewise = PiecewiseConst(src_id=self.src_id,
+                                   seed=seed,
+                                   change_times=change_times,
+                                   rates=rates)
+        return Manager(sim_opts=self,
+                       sources=[piecewise] + self.create_other_sources())
+
 
     def get_dict(self):
         """Returns dictionary form of the options."""
@@ -453,7 +471,10 @@ class SimOpts:
     def std_poisson(world_seed, world_rate):
         """Returns a new SimOpts with fresh sources and default initialization."""
         return SimOpts(src_id=1,
-                       other_sources=[Poisson2(src_id=2, seed=world_seed, rate=world_rate)],
+                       other_sources=[(Poisson2,
+                                       {'src_id': 2,
+                                        'seed': world_seed,
+                                        'rate': world_rate})],
                        end_time=100.0,
                        sink_ids=[1001],
                        q_vec=np.asarray([1.0]),
@@ -466,7 +487,8 @@ def test_simOpts():
             'end_time'      : 100.0,
             'q_vec'         : np.array([1,2]),
             's'             : 1.0,
-            'other_sources' : [Poisson(2, 1), Poisson(3, 1)],
+            'other_sources' : [(Poisson, {'src_id': 2, 'seed': 1}),
+                               (Poisson, {'src_id': 3, 'seed': 1})],
             'sink_ids'      : [1001, 1000],
             'edge_list'     : [(1, 1001), (1, 1000), (2, 1000), (3, 1001)]
         }
@@ -476,5 +498,7 @@ def test_simOpts():
 
     s2 = s.update({ 'src_id': 2 })
     assert s2.src_id == 2
+
+    assert s.create_other_sources()[0].src_id == 2
 
 test_simOpts()
