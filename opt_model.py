@@ -492,14 +492,7 @@ class SimOpts:
         return Manager(sim_opts=self,
                        sources=[poisson] + self.create_other_sources())
 
-    def create_manager_for_wall(self):
-        """This generates the tweets of the rest of the other_sources only.
-        Useful for heuristics or oracle."""
-        edge_list = [x for x in self.edge_list if x[0] != self.src_id]
-        return Manager(sim_opts=self.update({ 'edge_list': edge_list }),
-                       sources=self.create_other_sources())
-
-    def create_manager_for_piecewise_const(self, seed, change_times, rates):
+    def create_manager_with_piecewise_const(self, seed, change_times, rates):
         """This returns a manager which runs the simulation with a piece-wise
         constant broadcaster and the other sources."""
         assert len(change_times) == len(rates)
@@ -509,6 +502,20 @@ class SimOpts:
                                    rates=rates)
         return Manager(sim_opts=self,
                        sources=[piecewise] + self.create_other_sources())
+
+    def create_manager_for_wall(self):
+        """This generates the tweets of the rest of the other_sources only.
+        Useful for heuristics or oracle."""
+        edge_list = [x for x in self.edge_list if x[0] != self.src_id]
+        return Manager(sim_opts=self.update({ 'edge_list': edge_list }),
+                       sources=self.create_other_sources())
+
+    def create_manager_with_times(self, event_times):
+        """Returns a manager which runs the wall as dictated by the options
+        and tweets at the specified times."""
+        deterministic = RealData(self.src_id, event_times)
+        return Manager(sim_opts=self,
+                       sources=[deterministic] + self.create_other_sources())
 
     def get_dict(self):
         """Returns dictionary form of the options."""
