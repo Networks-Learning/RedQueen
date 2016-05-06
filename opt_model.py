@@ -509,7 +509,6 @@ class SimOpts:
         return Manager(sim_opts=self,
                        sources=[piecewise] + self.create_other_sources())
 
-
     def get_dict(self):
         """Returns dictionary form of the options."""
         return {

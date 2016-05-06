@@ -150,7 +150,6 @@ def calc_loss_opt(df, sim_opts):
 
 ## Oracle
 
-
 def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
     """Returns the best places the oracle would have put events. Optionally, it
     can remove sources, use a custom weight vector and have a custom list of
@@ -172,16 +171,6 @@ def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
     s = sim_opts.s
 
     assert is_sorted(df.t.values), "Dataframe is not sorted by time."
-
-    # Find ∫r(t)dt if the Oracle had tweeted once in the beginning and then
-    # had not tweeted ever afterwards.
-
-    # There will be some NaN till the point all the sources had tweeted.
-    # Also, the ranks will start from 0. Fixing that:
-    # other_ranks = rank_of_src_in_df(df, src_id=None, with_time=False).fillna(0)
-
-    # Though each event should have a unique time, we take the 'mean' to catch
-    # bugs which may otherwise go unnoticed if we used .min or .first
     event_times = df.groupby('event_id').t.mean()
 
     n = event_times.shape[0]
@@ -201,14 +190,16 @@ def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
         # This can be made parallel and vectorized
         # Also, not the whole matrix needs to be filled in (reduce run-time by 50%)
         for r in range(min(k + 1, n)):
-            J[r, k] = q_vec * w[k] * (r ** 2) / 2 + min(J[0, k + 1] + (s / 2.0),
-                                                        J[r + 1, k + 1])
+            J[r, k] = min(0.5 * s + J[0, k + 1],
+                          0.5 * q_vec * w[k + 1] * ((r + 1) ** 2) + J[r + 1, k + 1])
 
     # We are implicitly assuming that the oracle starts with rank 0
     oracle_ranks = np.zeros(n + 1, dtype=int)
     u_star = np.zeros(n + 1, dtype=int)
     for k in range(n):
-        if J[0, k + 1] + (s / 2.0) < J[oracle_ranks[k] + 1, k + 1]:
+        lhs = 0.5 * s + J[0, k + 1]
+        rhs = 0.5 * q_vec * w[k + 1] * ((oracle_ranks[k] + 1) ** 2) + J[oracle_ranks[k] + 1, k + 1]
+        if lhs < rhs:
             u_star[k] = 1
             oracle_ranks[k + 1] = 0
         else:
