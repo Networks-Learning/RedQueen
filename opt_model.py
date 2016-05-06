@@ -420,16 +420,17 @@ class RealData(Broadcaster):
     def __init__(self, src_id, times):
         super(RealData, self).__init__(src_id, 0)
         self.times = np.asarray(times)
-        self.t_diff = np.diff(self.times)
+        self.t_diff = np.diff(np.concatenate([[0], self.times]))
         self.start_idx = None
 
     def get_num_events(self):
         return len(self.times)
 
-    def init_state(self, start_time, all_sink_ids, follower_sink_ids):
+    def init_state(self, start_time, all_sink_ids, follower_sink_ids, end_time):
         super(RealData, self).init_state(start_time,
                                          all_sink_ids,
-                                         follower_sink_ids)
+                                         follower_sink_ids,
+                                         end_time)
         self.start_idx = 0
         while self.start_idx < len(self.times) and self.times[self.start_idx] < start_time:
             self.start_idx += 1
@@ -441,9 +442,9 @@ class RealData(Broadcaster):
             else:
                 return np.inf
         elif event.src_id == self.src_id:
-            if self.start_idx < len(self.t_diff):
+            if self.start_idx < len(self.t_diff) - 1:
                 self.start_idx += 1
-                assert self.times[self.start_idx] > event.cur, "Skipped a real event."
+                assert self.times[self.start_idx] > event.cur_time, "Skipped a real event."
                 return self.t_diff[self.start_idx]
             else:
                 return np.inf
