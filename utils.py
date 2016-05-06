@@ -133,16 +133,13 @@ def calc_loss_poisson(df, u_const, src_id=None, end_time=None,
     return pd.Series(data=q_t + s_t, index=r_t.index)
 
 
-def calc_loss_opt(df, src_id, end_time,
-                  q_vec=None, s=1.0, follower_ids=None):
+def calc_loss_opt(df, sim_opts):
     """Calculate the loss for the given source assuming that it was the
     optimal broadcaster."""
 
-    if follower_ids is None:
-        follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
-
-    if q_vec is None:
-        q_vec = def_q_vec(len(follower_ids))
+    follower_ids = sim_opts.sink_ids
+    q_vec        = sim_opts.q_vec
+    src_id       = sim_opts.src_id
 
     r_t = rank_of_src_in_df(df, src_id)
     q_t = 0.5 * np.square(r_t[follower_ids].values).dot(q_vec)
