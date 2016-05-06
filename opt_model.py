@@ -6,8 +6,9 @@ import numpy as np
 import pandas as pd
 import sys
 import abc
+import bisect
 
-from utils import mb
+from utils import mb, is_sorted
 
 class Event:
     def __init__(self, event_id, time_delta, cur_time,
@@ -231,6 +232,7 @@ class Poisson2(Broadcaster):
     def __init__(self, src_id, seed, rate=1.0):
         super(Poisson2, self).__init__(src_id, seed)
         self.rate      = rate
+
         self.init      = False
         self.times     = None
         self.t_diff    = None
@@ -353,6 +355,65 @@ class Opt(Broadcaster):
 
             if self.last_self_event_time + self.t_delta > cur_time + t_delta_new:
                 return cur_time + t_delta_new - self.last_self_event_time
+
+
+class PiecewiseConst(Broadcaster):
+    def __init__(self, src_id, seed, change_times, rates):
+        """Creates a broadcaster which tweets with the given rates."""
+        super(PiecewiseConst, self).__init__(src_id, seed)
+
+        assert is_sorted(change_times)
+
+        self.change_times = change_times
+        self.rates        = rates
+
+        self.init         = False
+        self.times        = None
+        self.t_diff       = None
+        self.start_idx    = None
+
+    def get_rate_at(self, t):
+        """Finds what the instantaneous rate at time 't' is."""
+        return self.rates[bisect.bisect(self.change_times, t) - 1]
+
+    def get_next_interval(self, event):
+        if not self.init:
+            self.init = True
+
+            assert self.start_time <= self.change_times[0]
+            assert self.end_time   >= self.change_times[-1]
+
+            duration = self.end_time - self.start_time
+            max_rate = np.max(self.rates)
+
+            # Using Ogata to determine the event times.
+            num_all_events = self.random_state.poisson(max_rate * duration)
+            all_event_times = self.random_state.uniform(low=self.start_time,
+                                                        high=self.end_time,
+                                                        size=num_all_events)
+            thinned_event_times = []
+            for t in sorted(all_event_times):
+                # Rejection sampling
+                if self.random_state.rand() < self.get_rate_at(t) / max_rate:
+                    thinned_event_times.append(t)
+
+            self.times = np.concatenate([[self.start_time], thinned_event_times])
+            self.t_diff = np.diff(self.times)
+            self.start_idx = 0
+
+
+        if event is None:
+            return self.t_diff[0]
+        elif event.src_id == self.src_id:
+            self.start_idx += 1
+
+            if self.start_idx < len(self.t_diff):
+                assert self.times[self.start_idx] <= event.cur_time
+                assert self.times[self.start_idx + 1] > event.cur_time
+                return self.t_diff[self.start_idx]
+            else:
+                return np.inf
+
 
 
 class RealData(Broadcaster):
