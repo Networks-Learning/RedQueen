@@ -76,8 +76,7 @@ def u_int_opt(df, src_id=None, end_time=None, q_vec=None, s=None,
     return np.sum(u_values * u_dt)
 
 
-def time_in_top_k(df, K, src_id=None, end_time=None, q_vec=None, s=None,
-                  follower_ids=None, sim_opts=None):
+def time_in_top_k(df, K, src_id=None, end_time=None, sim_opts=None):
     """Calculate ∫I(r(t) <= k)dt for the given src_id."""
 
     # if follower_ids is None:
@@ -86,17 +85,28 @@ def time_in_top_k(df, K, src_id=None, end_time=None, q_vec=None, s=None,
     if sim_opts is not None:
         src_id       = mb(src_id, sim_opts.src_id)
         end_time     = mb(end_time, sim_opts.end_time)
-        q_vec        = mb(q_vec, sim_opts.q_vec)
-        s            = mb(s, sim_opts.s)
-        follower_ids = mb(follower_ids, sim_opts.sink_ids)
-
-    assert is_sorted(follower_ids)
 
     r_t      = rank_of_src_in_df(df, src_id)
     I_values = np.where(r_t.mean(1) <= K - 1, 1.0, 0.0)
     I_dt     = np.diff(np.concatenate([r_t.index.values, [end_time]]))
 
     return np.sum(I_values * I_dt)
+
+
+def average_rank(df, src_id=None, end_time=None, sim_opts=None, **kwargs):
+    """Calculate ∫r(t)dt for the given src_id."""
+
+    # if follower_ids is None:
+    #     follower_ids = sorted(df[df.src_id == src_id].sink_id.unique())
+
+    if sim_opts is not None:
+        src_id       = mb(src_id, sim_opts.src_id)
+        end_time     = mb(end_time, sim_opts.end_time)
+
+    r_t  = rank_of_src_in_df(df, src_id)
+    r_dt = np.diff(np.concatenate([r_t.index.values, [end_time]]))
+
+    return np.sum(r_t.mean(1) * r_dt)
 
 
 def calc_loss_poisson(df, u_const, src_id=None, end_time=None,
