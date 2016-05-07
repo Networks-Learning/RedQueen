@@ -103,10 +103,16 @@ def average_rank(df, src_id=None, end_time=None, sim_opts=None, **kwargs):
         src_id       = mb(src_id, sim_opts.src_id)
         end_time     = mb(end_time, sim_opts.end_time)
 
-    r_t  = rank_of_src_in_df(df, src_id)
+    r_t  = rank_of_src_in_df(df, src_id).mean(1)
     r_dt = np.diff(np.concatenate([r_t.index.values, [end_time]]))
 
-    return np.sum(r_t.mean(1) * r_dt)
+    return np.sum(r_t * r_dt)
+
+def int_r_2(df, sim_opts):
+    """Returns ∫r²(t)dt for the given source id."""
+    r_t = rank_of_src_in_df(df, sim_opts.src_id).mean(1)
+    r_dt = np.diff(np.concatenate([r_t.index.values, [sim_opts.end_time]]))
+    return np.sum(r_t ** 2 * r_dt)
 
 
 def calc_loss_poisson(df, u_const, src_id=None, end_time=None,
@@ -294,6 +300,7 @@ def find_opt_oracle_s(target_events, sim_opts, tol=1e-1, verbose=False):
 
 
 def find_opt_oracle_time_top_k(target_events, K, sim_opts, tol=1e-1, verbose=False):
+    print('This method is incorrect.', file=sys.stderr)
     res = find_opt_oracle(target_events, sim_opts, tol, verbose)
     df = res['df']
     return np.sum(df.t_delta[df.ranks <= K - 1])
