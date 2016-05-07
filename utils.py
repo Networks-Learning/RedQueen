@@ -467,20 +467,21 @@ def sweep_s(sim_opts_gen, capacity_cap, tol=1e-2, verbose=False, s_init=1.0):
 
 ## Workers for metrics
 
-import broadcast.opt.optimizer as Bopt
 
-# This is how much after the event that the Oracle tweets.
-oracle_eps = 1e-10
+perf_opts = Options(oracle_eps=1e-10, # This is how much after the event that the Oracle tweets.
+                    Ks=[1, 3, 5, 10, 20],
+                    performance_fields=['seed', 's', 'type'] +
+                                       ['top_' + str(k) for k in Ks] +
+                                       ['avg_rank', 'r_2', 'world_events'])
 
-Ks = [1, 3, 5, 10, 20]
-performance_fields = ['seed', 's', 'type'] + ['top_' + str(k) for k in Ks] + ['avg_rank', 'r_2']
 
 def add_perf(op, df, sim_opts):
-    for k in Ks:
+    for k in perf_opts.Ks:
         op['top_' + str(k)] = time_in_top_k(df=df, K=k, sim_opts=sim_opts)
 
     op['avg_rank'] = average_rank(df, sim_opts=sim_opts)
     op['r_2'] =  r_2(df, sim_opts=sim_opts)
+    op['world_events'] = np.sum(df.src_id != sim_opts.src_id)
 
 
 def worker_opt(params):
@@ -531,7 +532,7 @@ def worker_oracle(params):
     seed, capacity, sim_opts, queue = params
     opt_oracle = find_opt_oracle(capacity, sim_opts)
     oracle_df = opt_oracle['df']
-    opt_oracle_mgr = sim_opts.create_manager_with_times(oracle_df.t[oracle_df.events == 1] + oracle_eps)
+    opt_oracle_mgr = sim_opts.create_manager_with_times(oracle_df.t[oracle_df.events == 1] + perf_opts.oracle_eps)
     opt_oracle_mgr.run()
     df = opt_oracle_mgr.state.get_dataframe()
 
@@ -576,16 +577,16 @@ def worker_kdd(params):
     threshold = 0.005
 
     op = {
-        'type'   : 'kdd',
-        'seed'   : seed,
-        'sim_opts': sim_opts,
-        's'      : sim_opts.s
+        'type'     : 'kdd',
+        'seed'     : seed,
+        'sim_opts' : sim_opts,
+        's'        : sim_opts.s
     }
 
     best_avg_rank, best_avg_k = np.inf, -1
     best_r_2, best_r_2_k = np.inf, -1
 
-    for k in Ks:
+    for k in perf_opts.Ks:
         def _util(x):
             return Bopt.utils.weighted_top_k(x,
                                              follower_wall_intensities,
@@ -637,6 +638,7 @@ def worker_kdd(params):
     op['avg_rank_k'] = best_avg_k
     op['r_2']        = best_r_2
     op['r_2_k']      = best_r_2_k
+    op['world_events'] = np.sum(df.src_id != sim_opts.src_id)
 
     if queue is not None:
         queue.put(op)
@@ -663,7 +665,7 @@ def piecewise_sim_opt_factory(N, T, num_segments, world_rate):
 
     return Options(N=N, T=T, num_segments=num_segments, sim_opts_gen=sim_opts_gen)
 
-simulation_opts = Options(world_rate=1000.0, world_alphs=1.0, world_beta=2.0,
+simulation_opts = Options(world_rate=1000.0, world_alpha=1.0, world_beta=2.0,
                           N=10, T=1.0, num_segments=10)
 
 poisson_inf_opts = simulation_opts.set_new(
@@ -682,7 +684,7 @@ def run_inference(N, T, num_segments, sim_opts_gen):
     def extract_perf_fields(return_obj):
         """Extracts the relevant fields from the return object and returns them in a new dict."""
         result_dict = {}
-        for field in performance_fields:
+        for field in perf_opts.performance_fields:
             result_dict[field] = return_obj[field]
 
         return result_dict
