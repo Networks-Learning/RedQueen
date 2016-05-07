@@ -23,10 +23,18 @@ class Options(object):
         return self._internal_options_data[key]
 
     def set(self, *args, **kwargs):
+        """Change values on the option."""
         if len(args) == 2:
             return self._update(**{args[0]: args[1]})
         else:
             return self._update(**kwargs)
+
+    def set_new(self, *args, **kwargs):
+        """Set a new value on the option."""
+        if len(args) == 2:
+            return self._update_with_new_keys(**{args[0]: args[1]})
+        else:
+            return self._update_with_new_keys(**kwargs)
 
     def _get_dict(self):
         return self._internal_options_data.copy()
