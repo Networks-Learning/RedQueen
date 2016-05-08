@@ -1,6 +1,8 @@
 from functools import wraps
 import inspect
 
+# TODO: Make pickeable
+# Will involve adding '__getstate__'
 class Options(object):
     """An immutable place to save options for a simulation run."""
     def __init__(self, **kwargs):
