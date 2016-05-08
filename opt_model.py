@@ -372,7 +372,7 @@ class PiecewiseConst(Broadcaster):
         self.t_diff       = None
         self.start_idx    = None
 
-    def get_rate_at(self, t):
+    def get_rate(self, t):
         """Finds what the instantaneous rate at time 't' is."""
         return self.rates[bisect.bisect(self.change_times, t) - 1]
 
@@ -394,7 +394,7 @@ class PiecewiseConst(Broadcaster):
             thinned_event_times = []
             for t in sorted(all_event_times):
                 # Rejection sampling
-                if self.random_state.rand() < self.get_rate_at(t) / max_rate:
+                if self.random_state.rand() < self.get_rate(t) / max_rate:
                     thinned_event_times.append(t)
 
             self.times = np.concatenate([[self.start_time], thinned_event_times])
