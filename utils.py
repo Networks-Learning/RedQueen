@@ -2,11 +2,14 @@
 
 import matplotlib
 from matplotlib import pyplot as py
+from collections import defaultdict
 import multiprocessing as mp
 import numpy as np
 import pandas as pd
 import sys
 import datetime as D
+import broadcast.opt.optimizer as Bopt
+
 from options import Options, optioned
 
 ## Utilities
@@ -468,8 +471,9 @@ def sweep_s(sim_opts_gen, capacity_cap, tol=1e-2, verbose=False, s_init=1.0):
 ## Workers for metrics
 
 
+Ks=[1, 3, 5, 10, 20]
 perf_opts = Options(oracle_eps=1e-10, # This is how much after the event that the Oracle tweets.
-                    Ks=[1, 3, 5, 10, 20],
+                    Ks=Ks,
                     performance_fields=['seed', 's', 'type'] +
                                        ['top_' + str(k) for k in Ks] +
                                        ['avg_rank', 'r_2', 'world_events'])
@@ -480,7 +484,7 @@ def add_perf(op, df, sim_opts):
         op['top_' + str(k)] = time_in_top_k(df=df, K=k, sim_opts=sim_opts)
 
     op['avg_rank'] = average_rank(df, sim_opts=sim_opts)
-    op['r_2'] =  r_2(df, sim_opts=sim_opts)
+    op['r_2'] =  int_r_2(df, sim_opts=sim_opts)
     op['world_events'] = np.sum(df.src_id != sim_opts.src_id)
 
 
@@ -616,7 +620,7 @@ def worker_kdd(params):
         )
         piecewise_const_mgr.run()
         df = piecewise_const_mgr.state.get_dataframe()
-        perf = time_in_top_k(df=df, K=K, sim_opts=sim_opts)
+        perf = time_in_top_k(df=df, K=k, sim_opts=sim_opts)
         op['top_' + str(k)] = perf
 
         avg_rank = average_rank(df, sim_opts=sim_opts)
