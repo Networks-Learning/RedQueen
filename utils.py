@@ -682,17 +682,20 @@ hawkes_inf_opts = simulation_opts.set_new(
                                                  world_alpha=simulation_opts.world_alpha,
                                                  world_beta=simulation_opts.world_beta))
 
+
+def extract_perf_fields(return_obj):
+    """Extracts the relevant fields from the return object and returns them in a new dict."""
+    result_dict = {}
+    for field in perf_opts.performance_fields:
+        result_dict[field] = return_obj[field]
+
+    return result_dict
+
+
 @optioned(option_arg='opts')
 def run_inference(N, T, num_segments, sim_opts_gen):
-
-    def extract_perf_fields(return_obj):
-        """Extracts the relevant fields from the return object and returns them in a new dict."""
-        result_dict = {}
-        for field in perf_opts.performance_fields:
-            result_dict[field] = return_obj[field]
-
-        return result_dict
-
+    """Run inference for the given sim_opts_gen by sweeping over 's' and
+    running the simulation for different seeds."""
     processes = []
     queue = mp.Queue()
     results = []
@@ -719,10 +722,9 @@ def run_inference(N, T, num_segments, sim_opts_gen):
             r = queue.get()
             raw_results.append(r)
             results.append(extract_perf_fields(r))
+            active_processes -= 1
 
             if r['type'] == 'Opt':
-                active_processes -= 1
-
                 seed = r['seed']
                 capacity = r['capacity']
                 s = r['sim_opts'].s
@@ -757,17 +759,14 @@ def run_inference(N, T, num_segments, sim_opts_gen):
                 active_processes += 1
 
             elif r['type'] == 'Poisson':
-                active_processes -= 1
                 if active_processes % 10 == 0:
                     logTime('Active processes = {}'.format(active_processes))
 
             elif r['type'] == 'Oracle':
-                active_processes -= 1
                 if active_processes % 10 == 0:
                     logTime('Active processes = {}'.format(active_processes))
 
             elif r['type'] == 'kdd':
-                active_processes -= 1
                 if active_processes % 10 == 0:
                     logTime('Active processes = {}'.format(active_processes))
 
@@ -783,3 +782,121 @@ def run_inference(N, T, num_segments, sim_opts_gen):
     return Options(df=pd.DataFrame.from_records(results),
                    raw_results=raw_results,
                    capacities=capacities)
+
+
+
+@optioned(option_arg='opts')
+def run_inference_queue(N, T, num_segments, sim_opts_gen, num_procs=None):
+    """Run inference for the given sim_opts_gen by sweeping over 's' and
+    running the simulation for different seeds."""
+
+    if num_procs is None:
+        num_procs = mp.cpu_count() - 1
+
+    def worker(input_queue, output_queue):
+        while True:
+            broadcaster_type, broadcaster_args = input_queue.get()
+
+            if broadcaster_type == 'Stop':
+                break
+
+            try:
+                all_args = broadcaster_args + (output_queue,)
+                if broadcaster_type == 'Opt':
+                    worker_opt(all_args)
+                elif broadcaster_type == 'Poisson':
+                    worker_poisson(all_args)
+                elif broadcaster_type == 'Oracle':
+                    worker_oracle(all_args)
+                elif broadcaster_type == 'kdd':
+                    worker_kdd(all_args)
+                else:
+                    raise RuntimeError('Unknown broadcaster type: {}'.format(broadcaster_type))
+            except e:
+                output_queue.put({
+                    'type' : 'Exception',
+                    'error': e,
+                    'broadcaster_type': broadcaster_type,
+                    'broadcaster_args': broadcaster_args
+                })
+
+    in_queue = mp.Queue()
+    out_queue = mp.Queue()
+    results = []
+    raw_results = []
+    capacities = {}
+
+    # Start consumers
+    processes = [mp.Process(target=worker, args=(in_queue, out_queue))
+                 for _ in range(num_procs)]
+
+    for p in processes:
+        p.daemon = True # Terminate if the parent dies.
+        p.start()
+
+    active_procs = 0
+    type_procs = defaultdict(lambda: 0)
+
+    def add_task(task_type, args):
+        in_queue.put((task_type, args))
+        type_procs[task_type] += 1
+
+    try:
+        for s in np.logspace(-8, 1, num=10):
+            capacities[s] = []
+            for seed in range(N):
+                in_queue.put(('Opt', (seed, sim_opts_gen(seed).update({ 's': s }))))
+                active_procs += 1
+
+        type_procs['Opt'] = active_procs
+        while active_procs > 0:
+            r = out_queue.get()
+            active_procs -= 1
+            type_procs[r['type']] -= 1
+
+            if active_procs % 10 == 0:
+                logTime('active_procs = {}, procs = {}'
+                        .format(active_procs, list(type_procs.items())))
+
+            if r['type'] == 'Exception':
+                print('Exception while handling: ', r)
+            else:
+                raw_results.append(r)
+                results.append(extract_perf_fields(r))
+
+                if r['type'] == 'Opt':
+                    seed = r['seed']
+                    capacity = r['capacity']
+                    s = r['sim_opts'].s
+                    sim_opts = r['sim_opts']
+                    capacities[s].append(capacity)
+
+                    add_task('Poisson', (seed, capacity, sim_opts))
+                    active_procs += 1
+
+                    add_task('Oracle', (seed, capacity, sim_opts))
+                    active_procs += 1
+
+                    add_task('kdd', (seed, capacity, num_segments, sim_opts, None))
+                    active_procs += 1
+
+        for p in range(num_procs):
+            in_queue.put(('Stop', None))
+
+    except:
+        # In case of exceptions, do not block the parent thread and just
+        # discard all data on the queues.
+        in_queue.cancel_join_thread()
+        out_queue.cancel_join_thread()
+        raise
+    finally:
+        print('Cleaning up {} processes'.format(len(processes)))
+        for p in processes:
+            p.terminate()
+            p.join()
+
+    return Options(df=pd.DataFrame.from_records(results),
+                   raw_results = raw_results,
+                   capacities=capacities)
+
+
