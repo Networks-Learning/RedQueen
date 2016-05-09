@@ -239,7 +239,7 @@ def get_oracle_df(sim_opts, with_cost=False):
         return oracle_df
 
 
-def find_opt_oracle(target_events, sim_opts, tol=1e-2, verbose=False):
+def find_opt_oracle(target_events, sim_opts, max_events=None, tol=1e-2, verbose=False):
     """Sweep the 's' parameter and get the best run of the oracle."""
     s_hi, s_init, s_lo = 1.0 * 2, 1.0, 1.0 / 2
 
@@ -258,7 +258,7 @@ def find_opt_oracle(target_events, sim_opts, tol=1e-2, verbose=False):
             if verbose:
                 logTime('s_lo = {}, s_hi = {}, num_events = {} '
                         .format(s_lo, s_hi, num_events))
-            if num_events < target_events:
+            if num_events <= target_events:
                 break
     elif num_events < target_events:
         while True:
@@ -269,7 +269,7 @@ def find_opt_oracle(target_events, sim_opts, tol=1e-2, verbose=False):
             if verbose:
                 logTime('s_lo = {}, s_hi = {}, num_events = {} '
                         .format(s_lo, s_hi, num_events))
-            if num_events > target_events:
+            if num_events >= target_events or num_events == max_events:
                 break
 
     if verbose:
@@ -304,7 +304,7 @@ def find_opt_oracle_s(target_events, sim_opts, tol=1e-1, verbose=False):
 
 
 def find_opt_oracle_time_top_k(target_events, K, sim_opts, tol=1e-1, verbose=False):
-    print('This method is incorrect.', file=sys.stderr)
+    logTime('This method is incorrect.', file=sys.stderr)
     res = find_opt_oracle(target_events, sim_opts, tol, verbose)
     df = res['df']
     return np.sum(df.t_delta[df.ranks <= K - 1])
@@ -419,6 +419,8 @@ def calc_q_capacity_iter(sim_opts_gen, s, seeds=None, parallel=True):
     return capacities
 
 
+# There are so many ways this can go north. Particularly, if the user capacity
+# is much higher than the average of the wall of other followees.
 def sweep_s(sim_opts_gen, capacity_cap, tol=1e-2, verbose=False, s_init=1.0):
     # We know that on average, the ∫u(t)dt decreases with increasing 's'
 
@@ -493,14 +495,18 @@ def worker_opt(params):
     sim_mgr = sim_opts.create_manager_with_opt(seed=seed)
     sim_mgr.run()
     df = sim_mgr.state.get_dataframe()
-    capacity = u_int_opt(df=df, sim_opts=sim_opts)
+    # If Capacity if calculated this way, then the Optimal Broadcaster
+    # May end up with number of tweets higher than the number of tweets
+    # produced by the rest of the world.
+    # capacity = u_int_opt(df=df, sim_opts=sim_opts)
+    capacity = (df.src_id == sim_opts.src_id).sum() * 1.0
     op = {
-        'type': 'Opt',
-        'seed': seed,
-        'capacity': capacity,
-        'sim_opts': sim_opts,
-        's': sim_opts.s,
-        'num_events': np.sum(df.src_id == sim_opts.src_id)
+        'type'       : 'Opt',
+        'seed'       : seed,
+        'capacity'   : capacity,
+        'sim_opts'   : sim_opts,
+        's'          : sim_opts.s,
+        'num_events' : np.sum(df.src_id == sim_opts.src_id)
     }
 
     add_perf(op, df, sim_opts)
@@ -533,20 +539,21 @@ def worker_poisson(params):
 
 
 def worker_oracle(params):
-    seed, capacity, sim_opts, queue = params
-    opt_oracle = find_opt_oracle(capacity, sim_opts)
+    seed, capacity, max_events, sim_opts, queue = params
+    opt_oracle = find_opt_oracle(capacity, sim_opts, max_events=max_events)
     oracle_df = opt_oracle['df']
-    opt_oracle_mgr = sim_opts.create_manager_with_times(oracle_df.t[oracle_df.events == 1] + perf_opts.oracle_eps)
+    opt_oracle_mgr = sim_opts.create_manager_with_times(oracle_df.t[oracle_df.events == 1] +
+                                                        perf_opts.oracle_eps)
     opt_oracle_mgr.run()
     df = opt_oracle_mgr.state.get_dataframe()
 
     op = {
-        'type': 'Oracle',
-        'seed': seed,
-        'sim_opts': sim_opts,
-        's': sim_opts.s,
-        'r0_num_events': np.sum(oracle_df.events == 1),
-        'num_events': np.sum(df.src_id == sim_opts.src_id)
+        'type'          : 'Oracle',
+        'seed'          : seed,
+        'sim_opts'      : sim_opts,
+        's'             : sim_opts.s,
+        'r0_num_events' : np.sum(oracle_df.events == 1),
+        'num_events'    : np.sum(df.src_id == sim_opts.src_id)
     }
 
 
@@ -604,14 +611,20 @@ def worker_kdd(params):
                                                   follower_weights,
                                                   k)
 
-        x0 = np.ones(num_segments)
+        # Initial guess is close to Poisson solution
+        x0 = np.ones(num_segments) * capacity
 
-        kdd_opt = Bopt.optimize(util=_util,
+        kdd_opt, iters = Bopt.optimize(util=_util,
                                 util_grad=_util_grad,
                                 budget=capacity,
                                 upper_bounds=upper_bounds,
                                 threshold=threshold,
-                                x0=x0)
+                                x0=x0,
+                                verbose=False,
+                                with_iter=True)
+
+        op['kdd_opt_' + str(k)] = kdd_opt
+        op['kdd_opt_iters_' + str(k)] = iters
 
         piecewise_const_mgr = sim_opts.create_manager_with_piecewise_const(
             seed=seed,
@@ -655,9 +668,13 @@ def worker_kdd(params):
 # This will lead to a better utilization of the CPU resources (hopefully) because the previous method only allowed
 # parallization of the number of seeds.
 
+dilation = 100.0
+simulation_opts = Options(world_rate=1000.0 / dilation, world_alpha=1.0, world_beta=10.0,
+                          N=10, T=1.0 * dilation, num_segments=10,
+                          log_s_low=-8 + np.log10(dilation), log_s_high=1 + np.log10(dilation))
 
 @optioned(option_arg='opts')
-def piecewise_sim_opt_factory(N, T, num_segments, world_rate):
+def piecewise_sim_opt_factory(N, T, num_segments, world_rate, opts):
     random_state = np.random.RandomState(42)
     world_changing_rates = random_state.uniform(low=world_rate / 2.0, high=world_rate, size=num_segments)
     world_change_times = np.arange(num_segments) * T / num_segments
@@ -667,20 +684,20 @@ def piecewise_sim_opt_factory(N, T, num_segments, world_rate):
                                            world_change_times=world_change_times,
                                            world_seed=seed + 42).update({'end_time': T })
 
-    return Options(N=N, T=T, num_segments=num_segments, sim_opts_gen=sim_opts_gen)
-
-simulation_opts = Options(world_rate=1000.0, world_alpha=1.0, world_beta=2.0,
-                          N=10, T=1.0, num_segments=10)
+    return opts.set_new(N=N, T=T, num_segments=num_segments, sim_opts_gen=sim_opts_gen)
 
 poisson_inf_opts = simulation_opts.set_new(
     sim_opts_gen=lambda seed: SimOpts.std_poisson(world_rate=simulation_opts.world_rate,
-                                                  world_seed=seed))
+                                                  world_seed=seed)
+                                     .update({ 'end_time': simulation_opts.T }))
+
 piecewise_inf_opts = piecewise_sim_opt_factory(opts=simulation_opts)
 hawkes_inf_opts = simulation_opts.set_new(
     sim_opts_gen=lambda seed: SimOpts.std_hawkes(world_seed=seed,
                                                  world_lambda_0=simulation_opts.world_rate,
                                                  world_alpha=simulation_opts.world_alpha,
-                                                 world_beta=simulation_opts.world_beta))
+                                                 world_beta=simulation_opts.world_beta)
+                                     .update({ 'end_time': simulation_opts.T }))
 
 
 def extract_perf_fields(return_obj):
@@ -693,7 +710,7 @@ def extract_perf_fields(return_obj):
 
 
 @optioned(option_arg='opts')
-def run_inference(N, T, num_segments, sim_opts_gen):
+def run_inference(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low):
     """Run inference for the given sim_opts_gen by sweeping over 's' and
     running the simulation for different seeds."""
     processes = []
@@ -704,7 +721,7 @@ def run_inference(N, T, num_segments, sim_opts_gen):
 
     try:
         active_processes = 0
-        for s in np.logspace(-8, 1, num=10):
+        for s in np.logspace(log_s_low, log_s_high, num=10):
             capacities[s] = []
             for seed in range(N):
                 active_processes += 1
@@ -729,7 +746,8 @@ def run_inference(N, T, num_segments, sim_opts_gen):
                 capacity = r['capacity']
                 s = r['sim_opts'].s
                 sim_opts = r['sim_opts']
-                capacities[s].append(capacity)
+                world_events = r['world_events']
+                capacities[s].append((seed, capacity))
 
                 # Poisson
 
@@ -741,7 +759,7 @@ def run_inference(N, T, num_segments, sim_opts_gen):
 
                 # Oracle
 
-                oracle_args = (seed, capacity, sim_opts, queue)
+                oracle_args = (seed, capacity, world_events, sim_opts, queue)
                 p = mp.Process(target=worker_oracle, args=(oracle_args,))
                 processes.append(p)
                 p.daemon = True
@@ -786,7 +804,7 @@ def run_inference(N, T, num_segments, sim_opts_gen):
 
 
 @optioned(option_arg='opts')
-def run_inference_queue(N, T, num_segments, sim_opts_gen, num_procs=None):
+def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low, num_procs=None):
     """Run inference for the given sim_opts_gen by sweeping over 's' and
     running the simulation for different seeds."""
 
@@ -812,13 +830,14 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, num_procs=None):
                     worker_kdd(all_args)
                 else:
                     raise RuntimeError('Unknown broadcaster type: {}'.format(broadcaster_type))
-            except e:
+            except Exception as e:
                 output_queue.put({
-                    'type' : 'Exception',
-                    'error': e,
-                    'broadcaster_type': broadcaster_type,
-                    'broadcaster_args': broadcaster_args
+                    'type'             : 'Exception',
+                    'error'            : e,
+                    'broadcaster_type' : broadcaster_type,
+                    'broadcaster_args' : broadcaster_args
                 })
+                raise
 
     in_queue = mp.Queue()
     out_queue = mp.Queue()
@@ -842,7 +861,7 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, num_procs=None):
         type_procs[task_type] += 1
 
     try:
-        for s in np.logspace(-8, 1, num=10):
+        for s in np.logspace(log_s_low, log_s_high, num=10):
             capacities[s] = []
             for seed in range(N):
                 in_queue.put(('Opt', (seed, sim_opts_gen(seed).update({ 's': s }))))
@@ -869,12 +888,13 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, num_procs=None):
                     capacity = r['capacity']
                     s = r['sim_opts'].s
                     sim_opts = r['sim_opts']
-                    capacities[s].append(capacity)
+                    world_events = r['world_events']
+                    capacities[s].append((seed, capacity))
 
                     add_task('Poisson', (seed, capacity, sim_opts))
                     active_procs += 1
 
-                    add_task('Oracle', (seed, capacity, sim_opts))
+                    add_task('Oracle', (seed, capacity, world_events, sim_opts))
                     active_procs += 1
 
                     add_task('kdd', (seed, capacity, num_segments, sim_opts, None))
