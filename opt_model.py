@@ -468,7 +468,26 @@ class SimOpts:
 
     def create_other_sources(self):
         """Instantiates the other_sources."""
-        return [x[0](**x[1]) for x in self.other_sources]
+        others = []
+        for x in self.other_sources:
+            if callable(x[0]):
+                others.append(x[0](**x[1]))
+            elif x[0] == 'Hawkes':
+                others.append(Hawkes(**x[1]))
+            elif x[0] == 'RealData':
+                others.append(RealData(**x[1]))
+            elif x[0] == 'Opt':
+                others.append(Opt(**x[1]))
+            elif x[0] == 'PiecewiseConst':
+                others.append(PiecewiseConst(**x[1]))
+            elif x[0] == 'Poisson':
+                others.append(Poisson(**x[1]))
+            elif x[0] == 'Poisson2':
+                others.append(Poisson2(**x[1]))
+            else:
+                raise ValueError('Unknown type of broadcaster: {}'.format(x[0]))
+
+        return others
 
     def create_manager_with_opt(self, seed):
         """Create a manager to run the simulation with Optimal broadcaster as
@@ -541,7 +560,7 @@ class SimOpts:
     def std_poisson(world_seed, world_rate):
         """Returns a new SimOpts with fresh sources and default initialization."""
         return SimOpts(src_id=1,
-                       other_sources=[(Poisson2,
+                       other_sources=[('Poisson2',
                                        {'src_id': 2,
                                         'seed': world_seed,
                                         'rate': world_rate})],
@@ -557,7 +576,7 @@ class SimOpts:
         assert world_alpha / world_beta <= 1.0, "The Hawkes wall will explode."
 
         return SimOpts(src_id=1,
-                       other_sources=[(Hawkes,
+                       other_sources=[('Hawkes',
                                        {'src_id': 2,
                                         'seed': world_seed,
                                         'l_0': world_lambda_0,
@@ -573,7 +592,7 @@ class SimOpts:
     def std_piecewise_const(world_seed, world_change_times, world_rates):
         """Returns a new SimOpts with a Piecewise constant wall model."""
         return SimOpts(src_id=1,
-                       other_sources=[(PiecewiseConst,
+                       other_sources=[('PiecewiseConst',
                                        {'src_id': 2,
                                         'seed': world_seed,
                                         'change_times': world_change_times,
@@ -605,5 +624,30 @@ def test_simOpts():
     assert s2.src_id == 2
 
     assert s.create_other_sources()[0].src_id == 2
+
+    init_opts_2 = {
+        'src_id'        : 1,
+        'end_time'      : 100.0,
+        'q_vec'         : np.array([1,2]),
+        's'             : 1.0,
+        'other_sources' : [('Poisson', {'src_id': 2, 'seed': 1, 'rate': 1000.0}),
+                           ('Poisson2', {'src_id': 3, 'seed': 1, 'rate': 1000.0}),
+                           ('Hawkes', {'src_id': 4, 'seed': 1, 'l_0': 1.0, 'alpha': 1.0, 'beta': 10.0}),
+                           ('PiecewiseConst', {'src_id': 5, 'seed': 1, 'rates': [0.0, 0.5, 1.0], 'change_times': [0, 50, 75]}),
+                           ('Opt', {'src_id': 6, 'seed': 1, 'q_vec': np.array([1.0]), 's': 1.0}),
+                           ('RealData', {'src_id': 7, 'times': [0,50,75]})],
+        'sink_ids'      : [1001, 1000],
+        'edge_list'     : [(1, 1001), (1, 1000), (2, 1000), (3, 1001), (4, 1000), (5, 1000), (6, 1000), (7, 1000)]
+    }
+
+    s = SimOpts(**init_opts_2)
+
+    assert isinstance(s.create_other_sources()[0], Poisson)
+    assert isinstance(s.create_other_sources()[1], Poisson2)
+    assert isinstance(s.create_other_sources()[2], Hawkes)
+    assert isinstance(s.create_other_sources()[3], PiecewiseConst)
+    assert isinstance(s.create_other_sources()[4], Opt)
+    assert isinstance(s.create_other_sources()[5], RealData)
+
 
 test_simOpts()
