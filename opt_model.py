@@ -91,6 +91,7 @@ class Manager:
 
         assert len(sources) > 0, "No sources."
         assert len(sink_ids) > 0, "No sinks."
+        assert len(set(x.src_id for x in sources)) == len(sources), "Duplicates in sources."
         assert len(set(sink_ids)) == len(sink_ids), "Duplicates in sink_ids."
 
         if edge_list is None:
