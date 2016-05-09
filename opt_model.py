@@ -387,7 +387,7 @@ class PiecewiseConst(Broadcaster):
             duration = self.end_time - self.start_time
             max_rate = np.max(self.rates)
 
-            # Using Ogata to determine the event times.
+            # Using thinning to determine the event times.
             num_all_events = self.random_state.poisson(max_rate * duration)
             all_event_times = self.random_state.uniform(low=self.start_time,
                                                         high=self.end_time,
@@ -402,15 +402,16 @@ class PiecewiseConst(Broadcaster):
             self.t_diff = np.diff(self.times)
             self.start_idx = 0
 
-
         if event is None:
             return self.t_diff[0]
         elif event.src_id == self.src_id:
             self.start_idx += 1
 
             if self.start_idx < len(self.t_diff):
-                assert self.times[self.start_idx] <= event.cur_time
-                assert self.times[self.start_idx + 1] > event.cur_time
+                # These assertions may not hold in case of rounding errors.
+                # TODO: How to handle those cases? Return t_delta as well as tweet time?
+                # assert self.times[self.start_idx] <= event.cur_time
+                # assert self.times[self.start_idx + 1] > event.cur_time
                 return self.t_diff[self.start_idx]
             else:
                 return np.inf
