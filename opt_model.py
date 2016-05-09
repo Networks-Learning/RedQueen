@@ -21,8 +21,8 @@ class Event:
         self.metadata   = metadata
 
     def __repr__(self):
-        return ('[ Event_id: {}, time_delta: {}, src_id: {} ]'
-                .format(self.event_id, self.time_delta, self.src_id))
+        return ('[ Event_id: {}, time_delta: {}, cur_time: {}, src_id: {} ]'
+                .format(self.event_id, self.time_delta, self.cur_time, self.src_id))
 
 
 class State:
