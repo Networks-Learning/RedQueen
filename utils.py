@@ -428,7 +428,7 @@ def sweep_s(sim_opts_gen, capacity_cap, tol=1e-2, verbose=False, s_init=1.0):
     init_cap = calc_q_capacity_iter(sim_opts_gen, s_init).mean()
 
     if verbose:
-        logTime('Initial capacity = {}'.format(init_cap))
+        logTime('Initial capacity = {}, target capacity = {}'.format(init_cap, capacity_cap))
 
     s = s_init
     if init_cap < capacity_cap:
@@ -436,14 +436,20 @@ def sweep_s(sim_opts_gen, capacity_cap, tol=1e-2, verbose=False, s_init=1.0):
             s_hi = s
             s /= 2.0
             s_lo = s
-            if calc_q_capacity_iter(sim_opts_gen, s).mean() > capacity_cap:
+            capacity = calc_q_capacity_iter(sim_opts_gen, s).mean()
+            if verbose:
+                logTime('s = {}, capcity = {}'.format(s, capacity))
+            if capacity > capacity_cap:
                 break
     else:
         while True:
             s_lo = s
             s *= 2.0
             s_hi = s
-            if calc_q_capacity_iter(sim_opts_gen, s).mean() < capacity_cap:
+            capacity = calc_q_capacity_iter(sim_opts_gen, s).mean()
+            if verbose:
+                logTime('s = {}, capcity = {}'.format(s, capacity))
+            if capacity < capacity_cap:
                 break
 
     if verbose:
