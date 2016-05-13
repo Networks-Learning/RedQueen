@@ -194,8 +194,6 @@ class Manager:
                 static_source_times.extend(zip(src.get_all_times(),
                                                I.repeat(src.src_id)))
 
-
-
         last_event = None
         event_id = 100
         static_source_times = sorted(static_source_times)
@@ -208,9 +206,12 @@ class Manager:
             # This step can be made parallel.
             # If multiple events happen at the same time, then the ordering
             # will still be deterministic: by the ID of the source.
-            t_delta, next_src_id = sorted((src.get_next_event_time(last_event),
-                                           src.src_id)
-                                          for src in dynamic_sources)[0]
+            if len(dynamic_sources) > 0:
+                t_delta, next_src_id = sorted((src.get_next_event_time(last_event),
+                                               src.src_id)
+                                              for src in dynamic_sources)[0]
+            else:
+                t_delta, next_src_id = np.inf, None
 
             assert t_delta >= 0, "Next event must be now or in the future."
 
@@ -542,11 +543,6 @@ class RealData2(Broadcaster):
         self.relevant_times = self.times[self.times >= start_time]
         self.t_diff = np.diff(np.concatenate([[start_time], self.relevant_times]))
 
-    def initialize(self):
-        pass
-
-    def get_all_times(self):
-        return self.relevant_times
 
 
 class RealData(Broadcaster):
@@ -554,6 +550,7 @@ class RealData(Broadcaster):
         super(RealData, self).__init__(src_id, 0)
         self.times = np.asarray(times)
         self.t_diff = None
+        self.is_dynamic = False
         self.start_idx = None
 
     def get_num_events(self):
@@ -567,6 +564,12 @@ class RealData(Broadcaster):
         self.start_idx = 0
         self.relevant_times = self.times[self.times >= start_time]
         self.t_diff = np.diff(np.concatenate([[start_time], self.relevant_times]))
+
+    def get_all_times(self):
+        return self.relevant_times
+
+    def initialize(self):
+        pass
 
     def get_next_interval(self, event):
         if event is None:
@@ -597,7 +600,7 @@ class SimOpts:
         self.edge_list     = kwargs['edge_list']
         self.end_time      = kwargs['end_time']
 
-    def create_other_sources(self, faster_reals=False):
+    def create_other_sources(self):
         """Instantiates the other_sources."""
         others = []
         for x in self.other_sources:
@@ -606,9 +609,7 @@ class SimOpts:
             elif x[0] == 'Hawkes':
                 others.append(Hawkes(**x[1]))
             elif x[0] == 'RealData':
-                others.append(RealData2(**x[1]) if faster_reals else RealData(**x[1]))
-            elif x[0] == 'RealData2':
-                others.append(RealData2(**x[1]))
+                others.append(RealData(**x[1]))
             elif x[0] == 'Opt':
                 others.append(Opt(**x[1]))
             elif x[0] == 'PiecewiseConst':
