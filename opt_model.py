@@ -300,7 +300,7 @@ class Broadcaster:
         return event.cur_time if event is not None else self.start_time
 
     @abc.abstractmethod
-    def get_next_interval(self):
+    def get_next_interval(self, event):
         """Should return a number to replace the current time to next event or
         None if no change should be made."""
         raise NotImplemented()
@@ -534,7 +534,7 @@ class RealData2(Broadcaster):
         return len(self.times)
 
     def init_state(self, start_time, all_sink_ids, follower_sink_ids, end_time):
-        super(RealData, self).init_state(start_time,
+        super(RealData2, self).init_state(start_time,
                                          all_sink_ids,
                                          follower_sink_ids,
                                          end_time)
