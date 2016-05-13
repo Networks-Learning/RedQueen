@@ -27,10 +27,18 @@ class Event:
 
 class State:
     def __init__(self, cur_time, sink_ids):
-        self.num_sinks = len(sink_ids)
-        self.time      = cur_time
-        self.sinks     = dict((x,[]) for x in sink_ids)
-        self.events    = []
+        self.num_sinks      = len(sink_ids)
+        self.time           = cur_time
+        self.sinks          = dict((x,[]) for x in sink_ids)
+        self.events         = []
+        self.track_src_id   = None
+        self._tracked_ranks = None
+
+
+    def set_track_src_id(self, src_id):
+        self.track_src_id = src_id
+        # Assume that the rank person tweeted first.
+        self._tracked_ranks = dict((sink_id, 0) for sink_id in self.sinks.keys())
 
     def apply_event(self, event):
         """Apply the given event to the state."""
@@ -45,6 +53,15 @@ class State:
         for sink_id in event.sink_ids:
             self.sinks[sink_id].append(event)
 
+        if self.track_src_id is not None:
+            if event.src_id == self.track_src_id:
+                self._tracked_ranks = dict((sink_id, 0) for sink_id in self.sinks.keys())
+            else:
+                for sink_id in event.sink_ids:
+                    self._tracked_ranks[sink_id] += 1
+
+
+
     def get_dataframe(self):
         """Return the list of events."""
         df = pd.DataFrame.from_records(
@@ -58,18 +75,21 @@ class State:
         )
         return df
 
-    def get_wall_rank(self, src_id, follower_ids, dict_form=True):
+    def get_wall_rank(self, src_id, follower_ids, dict_form=True, force_recalc=False):
         """Return a dictionary or vectors of rank of the src_id on the wall of
         the followers. If the follower does not have any events from the given
         source, the corresponding rank is `None`. The resulting vector will
         be formed after sorting the sink_ids.
         """
-        rank = dict((sink_id, None) for sink_id in follower_ids)
-        for sink_id in follower_ids:
-            for ii in range(len(self.sinks[sink_id]) - 1, -1, -1):
-                if self.sinks[sink_id][ii].src_id == src_id:
-                    rank[sink_id] = len(self.sinks[sink_id]) - ii - 1
-                    break # breaks the inner for loop
+        if self.track_src_id != src_id or force_recalc:
+            rank = dict((sink_id, None) for sink_id in follower_ids)
+            for sink_id in follower_ids:
+                for ii in range(len(self.sinks[sink_id]) - 1, -1, -1):
+                    if self.sinks[sink_id][ii].src_id == src_id:
+                        rank[sink_id] = len(self.sinks[sink_id]) - ii - 1
+                        break # breaks the inner for loop
+        else:
+            rank = self._tracked_ranks
 
         if dict_form:
             return rank
@@ -378,12 +398,6 @@ class Poisson(Broadcaster):
 #                                      for s in self.prev_excitations
 #                                      if s < t]))
 
-
-
-
-
-
-
 class Hawkes(Broadcaster):
     def __init__(self, src_id, seed, l_0=1.0, alpha=1.0, beta=10.0):
         super(Hawkes, self).__init__(src_id, seed)
@@ -426,16 +440,18 @@ class Opt(Broadcaster):
         self.init = False
 
     def get_next_interval(self, event):
-        self.state.apply_event(event)
-
         if not self.init:
             self.init = True
+            self.state.set_track_src_id(self.src_id)
+
             if isinstance(self.q, dict):
                 self.q_vec = np.asarray(self.q[x]
                                         for x in sorted(self.sink_ids))
             else:
                 # Assuming that the self.q is otherwise a scalar number.
                 self.q_vec = np.ones(len(self.sink_ids), dtype=float) * self.q
+
+        self.state.apply_event(event)
 
         if event is None:
             # Tweet immediately if this is the first event.
