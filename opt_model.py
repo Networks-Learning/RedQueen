@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 from __future__ import print_function
-import scipy.stats.distributions as Distr
 import numpy as np
 import pandas as pd
+import itertools as I
 import sys
 import abc
 import bisect
@@ -172,6 +172,78 @@ class Manager:
         return self
 
 
+    def run_dynamic(self):
+        end_time = self.end_time
+
+        # Step 1: Inform the sources of the sinks associated with them.
+        # Step 2: Give them the initial state
+        dynamic_sources = []
+        static_source_times = []
+        for src in self.sources:
+            if not src.is_fresh():
+                raise ValueError('Source with id: {} is not fresh.'
+                                 .format(src.src_id))
+
+            follower_ids = [x[1] for x in self.edge_list if x[0] == src.src_id]
+            src.init_state(self.state.time, self.sink_ids, follower_ids, end_time)
+
+            if src.is_dynamic:
+                dynamic_sources.append(src)
+            else:
+                src.initialize()
+                static_source_times.extend(zip(src.get_all_times(),
+                                               I.repeat(src.src_id)))
+
+
+
+        last_event = None
+        event_id = 100
+        static_source_times = sorted(static_source_times)
+        static_idx = 0
+
+        while True:
+            # Step 3: Generate one t_delta from each source and form the
+            # event which is going to happen next.
+
+            # This step can be made parallel.
+            # If multiple events happen at the same time, then the ordering
+            # will still be deterministic: by the ID of the source.
+            t_delta, next_src_id = sorted((src.get_next_event_time(last_event),
+                                           src.src_id)
+                                          for src in dynamic_sources)[0]
+
+            assert t_delta >= 0, "Next event must be now or in the future."
+
+            cur_time = self.state.time
+
+            if static_idx < len(static_source_times) and \
+                    cur_time + t_delta > static_source_times[static_idx][0]:
+                # Play the event of the static source
+                event_time, event_src = static_source_times[static_idx]
+                static_idx += 1
+            else:
+                # Play the event of the dynamic source
+                event_time = cur_time + t_delta
+                event_src = next_src_id
+
+            # Step 5: If cur_time + t_delta < end_time, go to step 4, else Step 7
+            if event_time > end_time:
+                break
+
+            # Step 4: Execute the first event
+            last_event = Event(event_id, event_time - cur_time,
+                               event_time, event_src,
+                               [x[1] for x in self.edge_list
+                                     if x[0] == event_src])
+            event_id += 1
+            self.state.apply_event(last_event)
+
+            # Step 6: Go to step 3
+
+        # Step 7: Stop
+        return self
+
+
 # Broadcasters
 ##############
 
@@ -188,6 +260,11 @@ class Broadcaster:
         self.end_time             = None
         self.last_self_event_time = None
         self.used                 = False
+        self.is_dynamic           = True
+
+    def get_all_times(self):
+        assert not self.is_dynamic
+        raise NotImplementedError()
 
     def init_state(self, start_time, all_sink_ids, follower_sink_ids, end_time):
         self.sink_ids   = sorted(follower_sink_ids)
@@ -232,24 +309,32 @@ class Broadcaster:
 class Poisson2(Broadcaster):
     def __init__(self, src_id, seed, rate=1.0):
         super(Poisson2, self).__init__(src_id, seed)
-        self.rate      = rate
+        self.rate       = rate
+        self.is_dynamic = False
+        self.init       = False
+        self.times      = None
+        self.t_diff     = None
+        self.start_idx  = None
 
-        self.init      = False
-        self.times     = None
-        self.t_diff    = None
-        self.start_idx = None
+    def get_all_times(self):
+        assert self.init
+        # Drop the start_time which was spuriously entered.
+        return self.times[1:]
+
+    def initialize(self):
+        self.init      = True
+        duration       = self.end_time - self.start_time
+        num_events     = self.random_state.poisson(self.rate * duration)
+        event_times    = self.random_state.uniform(low=self.start_time,
+                                                   high=self.end_time,
+                                                   size=num_events)
+        self.times     = sorted(np.concatenate([[self.start_time], event_times]))
+        self.t_diff    = np.diff(self.times)
+        self.start_idx = 0
 
     def get_next_interval(self, event):
         if not self.init:
-            self.init      = True
-            duration       = self.end_time - self.start_time
-            num_events     = self.random_state.poisson(self.rate * duration)
-            event_times    = self.random_state.uniform(low=self.start_time,
-                                                       high=self.end_time,
-                                                       size=num_events)
-            self.times     = sorted(np.concatenate([[self.start_time], event_times]))
-            self.t_diff    = np.diff(self.times)
-            self.start_idx = 0
+            self.initialize()
 
         if event is None:
             return self.t_diff[0]
@@ -267,13 +352,35 @@ class Poisson2(Broadcaster):
 class Poisson(Broadcaster):
     def __init__(self, src_id, seed, rate=1.0):
         super(Poisson, self).__init__(src_id, seed)
+        self.is_dynamic = True
         self.rate = rate
 
     def get_next_interval(self, event):
         if event is None or event.src_id == self.src_id:
             # Draw a new time, one event at a time
-            return Distr.expon.rvs(scale=1.0 / self.rate,
-                                   random_state=self.random_state)
+            return self.random_state.exponential(scale=1.0 / self.rate)
+
+# class Hawkes2(Broadcaster):
+#     def __init__(self, src_id, seed, l_0, alpha, beta):
+#         super(Hawkes2, self).__init__(src_id, seed)
+#         self.l_0 = l_0
+#         self.alpha = alpha
+#         self.beta = beta
+#         self.prev_interactions = []
+#         self.is_dynamic = False
+#         self.init = False
+#
+#     def get_rate(self, t):
+#         """Returns the rate of current Hawkes at time `t`."""
+#         return self.l_0 + \
+#             self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
+#                                      for s in self.prev_excitations
+#                                      if s < t]))
+
+
+
+
+
 
 
 class Hawkes(Broadcaster):
@@ -299,8 +406,8 @@ class Hawkes(Broadcaster):
 
             # Ogata sampling for one t-delta
             while True:
-                t_delta += Distr.expon.rvs(scale=1.0 / rate_bound,
-                                           random_state=self.random_state)
+                t_delta = self.random_state.exponential(scale=1.0 / rate_bound)
+
                 # Rejection sampling
                 if self.random_state.rand() < self.get_rate(t + t_delta) / rate_bound:
                     break
@@ -350,8 +457,7 @@ class Opt(Broadcaster):
             diff_rate = new_rate - self.old_rate
             self.old_rate = new_rate
 
-            t_delta_new = Distr.expon.rvs(scale=1.0 / diff_rate,
-                                          random_state=self.random_state)
+            t_delta_new = self.random_state.exponential(scale=1.0 / diff_rate)
             cur_time = event.cur_time
 
             if self.last_self_event_time + self.t_delta > cur_time + t_delta_new:
@@ -418,6 +524,31 @@ class PiecewiseConst(Broadcaster):
 
 
 
+class RealData2(Broadcaster):
+    def __init__(self, src_id, times):
+        super(RealData2, self).__init__(src_id, 0)
+        self.times = times
+        self.is_dynamic = False
+
+    def get_num_events(self):
+        return len(self.times)
+
+    def init_state(self, start_time, all_sink_ids, follower_sink_ids, end_time):
+        super(RealData, self).init_state(start_time,
+                                         all_sink_ids,
+                                         follower_sink_ids,
+                                         end_time)
+        self.start_idx = 0
+        self.relevant_times = self.times[self.times >= start_time]
+        self.t_diff = np.diff(np.concatenate([[start_time], self.relevant_times]))
+
+    def initialize(self):
+        pass
+
+    def get_all_times(self):
+        return self.relevant_times
+
+
 class RealData(Broadcaster):
     def __init__(self, src_id, times):
         super(RealData, self).__init__(src_id, 0)
@@ -466,7 +597,7 @@ class SimOpts:
         self.edge_list     = kwargs['edge_list']
         self.end_time      = kwargs['end_time']
 
-    def create_other_sources(self):
+    def create_other_sources(self, faster_reals=False):
         """Instantiates the other_sources."""
         others = []
         for x in self.other_sources:
@@ -475,7 +606,9 @@ class SimOpts:
             elif x[0] == 'Hawkes':
                 others.append(Hawkes(**x[1]))
             elif x[0] == 'RealData':
-                others.append(RealData(**x[1]))
+                others.append(RealData2(**x[1]) if faster_reals else RealData(**x[1]))
+            elif x[0] == 'RealData2':
+                others.append(RealData2(**x[1]))
             elif x[0] == 'Opt':
                 others.append(Opt(**x[1]))
             elif x[0] == 'PiecewiseConst':
