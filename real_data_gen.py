@@ -53,69 +53,75 @@ user_id = 12223582 # 4 minutes
 
 def get_user_data_for(user_id):
     hs = get_user_repository()
-    user_tweet_times = hs.get_user_tweets(user_id)
 
-    assert is_sorted(user_tweet_times), "User tweet times were not sorted."
-    # TODO: This should ideally be the last 2 months instead of tweeting history of
-    # the broadcaster. Or ....
-    # Is 2 months now.
+    try:
+        user_tweet_times = hs.get_user_tweets(user_id)
 
-    first_tweet_time, last_tweet_time = user_tweet_times[0], user_tweet_times[-1]
-    start_time = 1246406400 # GMT: Wed, 01 Jul 2009 00:00:00 GMT
-    end_time = 1251763200 # GMT: Tue, 01 Sep 2009 00:00:00 GMT
+        assert is_sorted(user_tweet_times), "User tweet times were not sorted."
+        # TODO: This should ideally be the last 2 months instead of tweeting history of
+        # the broadcaster. Or ....
+        # Is 2 months now.
 
-    if last_tweet_time < start_time:
-        # This user did not tweet in the relevant period of time
-        return (user_id, None)
+        first_tweet_time, last_tweet_time = user_tweet_times[0], user_tweet_times[-1]
+        start_time = 1246406400 # GMT: Wed, 01 Jul 2009 00:00:00 GMT
+        end_time = 1251763200 # GMT: Tue, 01 Sep 2009 00:00:00 GMT
 
-    # user_intensity = calc_avg_user_intensity(user_tweet_times,
-    #                                          start_time,
-    #                                          end_time)
+        if last_tweet_time < start_time:
+            # This user did not tweet in the relevant period of time
+            return (user_id, None)
+
+        # user_intensity = calc_avg_user_intensity(user_tweet_times,
+        #                                          start_time,
+        #                                          end_time)
 
 
-    # These are the ids of the sink
-    user_followers = hs.get_user_followers(user_id)
-    user_relevant_followers = []
-    log("Num followers of {} = {}".format(user_id, len(user_followers)))
-    edge_list, sources = [], []
+        # These are the ids of the sink
+        user_followers = hs.get_user_followers(user_id)
+        user_relevant_followers = []
+        log("Num followers of {} = {}".format(user_id, len(user_followers)))
+        edge_list, sources = [], []
 
-    for idx, follower_id in enumerate(user_followers):
-        followees_of_follower = len(hs.get_user_followees(follower_id))
-        if followees_of_follower < 500:
-            # If the number of followees of the follower are > 500, then Do not
-            # create their walls. This will discard about 30% of all users.
-            user_relevant_followers.append(follower_id)
-            wall = hs.get_user_wall(follower_id, excluded=user_id)
-            follower_source = make_real_data_broadcaster(follower_id, wall,
-                                                         start_time,
-                                                         end_time)
-            log("Wall of {} ({}/{}) has {} tweets, {} relevant"
-                .format(follower_id, idx + 1, len(user_followers),
-                        len(wall), follower_source.get_num_events()))
-            # The source for follower_id has the same ID
-            # There is one source per follower which produces the tweets
-            sources.append(follower_source)
-            edge_list.append((follower_id, follower_id))
+        for idx, follower_id in enumerate(user_followers):
+            followees_of_follower = len(hs.get_user_followees(follower_id))
+            if followees_of_follower < 500:
+                # If the number of followees of the follower are > 500, then Do not
+                # create their walls. This will discard about 30% of all users.
+                user_relevant_followers.append(follower_id)
+                wall = hs.get_user_wall(follower_id, excluded=user_id)
+                follower_source = make_real_data_broadcaster(follower_id, wall,
+                                                             start_time,
+                                                             end_time)
+                log("Wall of {} ({}/{}) has {} tweets, {} relevant"
+                    .format(follower_id, idx + 1, len(user_followers),
+                            len(wall), follower_source.get_num_events()))
+                # The source for follower_id has the same ID
+                # There is one source per follower which produces the tweets
+                sources.append(follower_source)
+                edge_list.append((follower_id, follower_id))
 
-    # The source user_id broadcasts tweets to all its followers
-    edge_list.extend([(user_id, follower_id)
-                      for follower_id in user_relevant_followers])
+        # The source user_id broadcasts tweets to all its followers
+        edge_list.extend([(user_id, follower_id)
+                          for follower_id in user_relevant_followers])
 
-    other_source_params = [('RealData', {'src_id': x.src_id,
-                                         'times': x.times})
-                           for x in sources]
+        other_source_params = [('RealData', {'src_id': x.src_id,
+                                             'times': x.times})
+                               for x in sources]
 
-    sim_opts = SimOpts(edge_list=edge_list,
-                   sink_ids=user_relevant_followers,
-                   src_id=user_id,
-                   q_vec=def_q_vec(len(user_relevant_followers)),
-                   s=1.0,
-                   other_sources=other_source_params,
-                   end_time=scaled_period)
-    hs.close()
+        sim_opts = SimOpts(edge_list=edge_list,
+                       sink_ids=user_relevant_followers,
+                       src_id=user_id,
+                       q_vec=def_q_vec(len(user_relevant_followers)),
+                       s=1.0,
+                       other_sources=other_source_params,
+                       end_time=scaled_period)
 
-    return (user_id, (sim_opts,
-                      scale_times(user_tweet_times, start_time, end_time, scaled_period)))
+        return (user_id, (sim_opts,
+                          scale_times(user_tweet_times, start_time, end_time, scaled_period)))
+    except Exception as e:
+        print('Encountered error', e, ' for user {}'.format(user_id))
+        return user_id, None
+    finally:
+        hs.close()
 
 
 output_folder = '/NL/ghtorrent/work/opt-broadcast/'
