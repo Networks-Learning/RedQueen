@@ -388,31 +388,36 @@ def format_axes(ax):
 ## Sweeping s
 
 def q_int_worker(params):
-    sim_opts, seed = params
+    sim_opts, seed, dynamic = params
     m = sim_opts.create_manager_with_opt(seed)
-    m.run()
+    if dynamic:
+        m.run_dynamic()
+    else:
+        m.run()
     return u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
 
 
-def calc_q_capacity_iter(sim_opts_gen, s, seeds=None, parallel=True):
+def calc_q_capacity_iter(sim_opts, s, seeds=None, parallel=True, dynamic=True):
     if seeds is None:
         seeds = range(10)
 
-    def _get_sim_opts():
-        return sim_opts_gen().update({ 's': s })
+    sim_opts = sim_opts.update({ 's': s })
 
     capacities = np.zeros(len(seeds), dtype=float)
     if not parallel:
         for idx, seed in enumerate(seeds):
-            m = _get_sim_opts().create_manager(seed)
-            m.run()
+            m = sim_opts.create_manager(seed)
+            if dynamic:
+                m.run_dynamic()
+            else:
+                m.run()
             capacities[idx] = u_int_opt(m.state.get_dataframe(),
-                                        sim_opts=_get_sim_opts())
+                                        sim_opts=sim_opts)
     else:
         num_workers = min(len(seeds), mp.cpu_count())
         with mp.Pool(num_workers) as pool:
             for (idx, capacity) in \
-                enumerate(pool.imap(q_int_worker, [(_get_sim_opts(), x)
+                enumerate(pool.imap(q_int_worker, [(sim_opts, x, dynamic)
                                                    for x in seeds])):
                 capacities[idx] = capacity
 
@@ -421,14 +426,23 @@ def calc_q_capacity_iter(sim_opts_gen, s, seeds=None, parallel=True):
 
 # There are so many ways this can go north. Particularly, if the user capacity
 # is much higher than the average of the wall of other followees.
-def sweep_s(sim_opts_gen, capacity_cap, tol=1e-2, verbose=False, s_init=1.0):
+def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynamic=True):
     # We know that on average, the ∫u(t)dt decreases with increasing 's'
 
+    if s_init is None:
+        wall_mgr = sim_opts.create_manager_for_wall()
+        wall_mgr.run_dynamic()
+        r_t = rank_of_src_in_df(wall_mgr.state.get_dataframe(), -1)
+        s_init = (4 * (r_t.iloc[-1].mean() ** 2) * (sim_opts.end_time) ** 2) / (np.pi * np.pi * (capacity_cap + 1) ** 4)
+        if verbose:
+            logTime('s_init = {}'.format(s_init))
+
     # Step 1: Find the upper/lower bound by exponential increase/decrease
-    init_cap = calc_q_capacity_iter(sim_opts_gen, s_init).mean()
+    init_cap = calc_q_capacity_iter(sim_opts, s_init, dynamic=dynamic).mean()
 
     if verbose:
-        logTime('Initial capacity = {}, target capacity = {}'.format(init_cap, capacity_cap))
+        logTime('Initial capacity = {}, target capacity = {}, s_init = {}'
+                .format(init_cap, capacity_cap, s_init))
 
     s = s_init
     if init_cap < capacity_cap:
@@ -436,20 +450,21 @@ def sweep_s(sim_opts_gen, capacity_cap, tol=1e-2, verbose=False, s_init=1.0):
             s_hi = s
             s /= 2.0
             s_lo = s
-            capacity = calc_q_capacity_iter(sim_opts_gen, s).mean()
+            capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
             if verbose:
                 logTime('s = {}, capcity = {}'.format(s, capacity))
-            if capacity > capacity_cap:
+            if capacity >= capacity_cap:
                 break
     else:
         while True:
             s_lo = s
             s *= 2.0
             s_hi = s
-            capacity = calc_q_capacity_iter(sim_opts_gen, s).mean()
+            capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
             if verbose:
                 logTime('s = {}, capcity = {}'.format(s, capacity))
-            if capacity < capacity_cap:
+            # TODO: will break if capacity_cap is too low ~ 1 event.
+            if capacity <= capacity_cap:
                 break
 
     if verbose:
@@ -458,12 +473,13 @@ def sweep_s(sim_opts_gen, capacity_cap, tol=1e-2, verbose=False, s_init=1.0):
     # Step 2: Keep bisecting on 's' until we arrive at a close enough solution.
     while True:
         s = (s_hi + s_lo) / 2.0
-        new_capacity = calc_q_capacity_iter(sim_opts_gen, s).mean()
+        new_capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
 
         if verbose:
             logTime('new_capacity = {}, s = {}'.format(new_capacity, s))
 
-        if abs(new_capacity - capacity_cap) / capacity_cap < tol:
+        if abs(new_capacity - capacity_cap) / capacity_cap < tol or \
+                np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1):
             # Have converged
             break
         elif new_capacity > capacity_cap:
