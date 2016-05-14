@@ -557,14 +557,19 @@ def worker_opt(params):
     # May end up with number of tweets higher than the number of tweets
     # produced by the rest of the world.
     # capacity = u_int_opt(df=df, sim_opts=sim_opts)
-    capacity = (df.src_id == sim_opts.src_id).sum() * 1.0
+
+    # Note: this works only if the optimal follower has exactly one follower. It is better to count the number
+    # of distinct times that the optimal broadcaster tweeted.
+    # capacity = (df.src_id == sim_opts.src_id).sum() * 1.0
+    num_events = len(df.event_id[df.src_id == sim_opts.src_id].unique())
+    capacity = num_events * 1.0
     op = {
         'type'       : 'Opt',
         'seed'       : seed,
         'capacity'   : capacity,
         'sim_opts'   : sim_opts,
         's'          : sim_opts.s,
-        'num_events' : np.sum(df.src_id == sim_opts.src_id)
+        'num_events' : num_events
     }
 
     add_perf(op, df, sim_opts)
