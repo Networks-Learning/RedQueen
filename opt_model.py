@@ -27,12 +27,13 @@ class Event:
 
 class State:
     def __init__(self, cur_time, sink_ids):
-        self.num_sinks      = len(sink_ids)
-        self.time           = cur_time
-        self.sinks          = dict((x,[]) for x in sink_ids)
-        self.events         = []
-        self.track_src_id   = None
-        self._tracked_ranks = None
+        self.num_sinks        = len(sink_ids)
+        self.time             = cur_time
+        self.sinks            = dict((x,[]) for x in sink_ids)
+        self.events           = []
+        self.track_src_id     = None
+        self._tracked_ranks   = None
+        self._sorted_sink_ids = sorted(self.sinks.keys())
 
 
     def set_track_src_id(self, src_id):
@@ -94,7 +95,7 @@ class State:
         if dict_form:
             return rank
         else:
-            return np.asarray([rank[sink_id] for sink_id in sorted(rank.keys())])
+            return np.asarray([rank[sink_id] for sink_id in self._sorted_sink_ids])
 
 
 class Manager:
