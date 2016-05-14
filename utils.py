@@ -243,21 +243,40 @@ def find_opt_oracle(target_events, sim_opts, max_events=None, tol=1e-2, verbose=
     """Sweep the 's' parameter and get the best run of the oracle."""
     s_hi, s_init, s_lo = 1.0 * 2, 1.0, 1.0 / 2
 
-    def oracle_num_events(s):
-        oracle_df = get_oracle_df(sim_opts.update({ 's': s }))
-        return oracle_df.events.sum()
+    def terminate_cond(opt_events):
+        return np.abs(opt_events - target_events) / (target_events * 1.0) < tol or \
+            (opt_events == np.ceil(target_events)) or \
+            (opt_events == np.floor(target_events))
 
-    num_events = oracle_num_events(s_init)
+    oracle_df, cost = get_oracle_df(sim_opts.update({ 's': s_init }),
+                                    with_cost=True)
+    num_events = oracle_df.events.sum()
+
+    if terminate_cond(num_events):
+        return {
+            's': s_init,
+            'cost': cost,
+            'oracle_df': oracle_df
+        }
+
 
     if num_events > target_events:
         while True:
             s_lo = s_init
             s_init *= 2
             s_hi = s_init
-            num_events = oracle_num_events(s_init)
+            oracle_df, cost = get_oracle_df(sim_opts.update({ 's': s_init }),
+                                            with_cost=True)
+            num_events = oracle_df.events.sum()
             if verbose:
                 logTime('s_lo = {}, s_hi = {}, num_events = {} '
                         .format(s_lo, s_hi, num_events))
+            if terminate_cond(num_events):
+                return {
+                    's': s_init,
+                    'cost': cost,
+                    'df': oracle_df
+                }
             if num_events <= target_events:
                 break
     elif num_events < target_events:
@@ -265,10 +284,18 @@ def find_opt_oracle(target_events, sim_opts, max_events=None, tol=1e-2, verbose=
             s_hi = s_init
             s_init /= 2
             s_lo = s_init
-            num_events = oracle_num_events(s_init)
+            oracle_df, cost = get_oracle_df(sim_opts.update({ 's': s_init }),
+                                            with_cost=True)
+            num_events = oracle_df.events.sum()
             if verbose:
                 logTime('s_lo = {}, s_hi = {}, num_events = {} '
                         .format(s_lo, s_hi, num_events))
+            if terminate_cond(num_events):
+                return {
+                    's': s_init,
+                    'cost': cost,
+                    'df': oracle_df
+                }
             if num_events >= target_events or num_events == max_events:
                 break
 
@@ -284,9 +311,7 @@ def find_opt_oracle(target_events, sim_opts, max_events=None, tol=1e-2, verbose=
         if verbose:
             logTime('s_try = {}, events = {}, cost = {}'.format(s_try, opt_events, cost))
 
-        if np.abs(opt_events - target_events) / (target_events * 1.0) < tol or \
-            (opt_events == np.ceil(target_events)) or \
-            (opt_events == np.floor(target_events)):
+        if terminate_cond(opt_events):
             return {
                 's': s_try,
                 'cost': cost,
@@ -429,6 +454,10 @@ def calc_q_capacity_iter(sim_opts, s, seeds=None, parallel=True, dynamic=True):
 def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynamic=True):
     # We know that on average, the ∫u(t)dt decreases with increasing 's'
 
+    def terminate_cond(new_capacity):
+        return abs(new_capacity - capacity_cap) / capacity_cap < tol or \
+                np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1)
+
     if s_init is None:
         wall_mgr = sim_opts.create_manager_for_wall()
         wall_mgr.run_dynamic()
@@ -439,6 +468,9 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
 
     # Step 1: Find the upper/lower bound by exponential increase/decrease
     init_cap = calc_q_capacity_iter(sim_opts, s_init, dynamic=dynamic).mean()
+
+    if terminate_cond(init_cap):
+        return s_init
 
     if verbose:
         logTime('Initial capacity = {}, target capacity = {}, s_init = {}'
@@ -453,6 +485,8 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
             capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
             if verbose:
                 logTime('s = {}, capcity = {}'.format(s, capacity))
+            if terminate_cond(capacity):
+                return s
             if capacity >= capacity_cap:
                 break
     else:
@@ -464,6 +498,8 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
             if verbose:
                 logTime('s = {}, capcity = {}'.format(s, capacity))
             # TODO: will break if capacity_cap is too low ~ 1 event.
+            if terminate_cond(capacity):
+                return s
             if capacity <= capacity_cap:
                 break
 
@@ -478,8 +514,7 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
         if verbose:
             logTime('new_capacity = {}, s = {}'.format(new_capacity, s))
 
-        if abs(new_capacity - capacity_cap) / capacity_cap < tol or \
-                np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1):
+        if terminate_cond(new_capacity):
             # Have converged
             break
         elif new_capacity > capacity_cap:
