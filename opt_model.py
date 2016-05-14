@@ -172,7 +172,7 @@ class Manager:
                                            src.src_id)
                                           for src in self.sources)[0]
 
-            assert t_delta >= 0, "Next event must be now or in the future."
+            # assert t_delta >= 0, "Next event must be now or in the future."
 
             # Step 5: If cur_time + t_delta < end_time, go to step 4, else Step 7
             cur_time = self.state.time
@@ -234,7 +234,7 @@ class Manager:
             else:
                 t_delta, next_src_id = np.inf, None
 
-            assert t_delta >= 0, "Next event must be now or in the future."
+            # assert t_delta >= 0, "Next event must be now or in the future."
 
             cur_time = self.state.time
 
