@@ -683,6 +683,10 @@ def worker_kdd(params):
         op['kdd_opt_' + str(k)] = kdd_opt
         op['kdd_opt_iters_' + str(k)] = iters
 
+        if iters > 49900:
+            print('Setting {} took {} iters to converge.'.format(op, iters),
+                  file=sys.stderr)
+
         piecewise_const_mgr = sim_opts.create_manager_with_piecewise_const(
             seed=seed,
             change_times=np.arange(num_segments) * seg_len,
