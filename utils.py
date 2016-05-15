@@ -628,6 +628,11 @@ def worker_oracle(params):
 
     return op
 
+def worker_real_data(params):
+    user_event_times, sim_opts, queue = params
+    user = RealData() # FIXME
+
+
 
 def worker_kdd(params):
     seed, capacity, num_segments, sim_opts, world_changing_rates, queue = params
@@ -648,7 +653,7 @@ def worker_kdd(params):
     follower_conn_prob = np.asarray([[1.0] * num_segments])
     follower_weights = [1.0]
 
-    upper_bounds = np.array([1e6] * num_segments)
+    upper_bounds = np.array([1e11] * num_segments)
     threshold = 0.005
 
     op = {
@@ -676,7 +681,7 @@ def worker_kdd(params):
                                                   k)
 
         # Initial guess is close to Poisson solution
-        x0 = np.ones(num_segments) * capacity
+        x0 = np.ones(num_segments) * capacity / num_segments
 
         kdd_opt, iters = Bopt.optimize(util=_util,
                                 util_grad=_util_grad,
@@ -684,7 +689,7 @@ def worker_kdd(params):
                                 upper_bounds=upper_bounds,
                                 threshold=threshold,
                                 x0=x0,
-                                verbose=False,
+                                verbose=True,
                                 with_iter=True)
 
         op['kdd_opt_' + str(k)] = kdd_opt
@@ -703,7 +708,7 @@ def worker_kdd(params):
         df = piecewise_const_mgr.state.get_dataframe()
         perf = time_in_top_k(df=df, K=k, sim_opts=sim_opts)
         op['top_' + str(k)] = perf
-        op['top_' + str(k) + '_num_events'] = len(df.events[df.src_id == sim_opts.src_id].unique())
+        op['top_' + str(k) + '_num_events'] = len(df.event_id[df.src_id == sim_opts.src_id].unique())
 
         avg_rank = average_rank(df, sim_opts=sim_opts)
         r_2 = int_r_2(df, sim_opts=sim_opts)
