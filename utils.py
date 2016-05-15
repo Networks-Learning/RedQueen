@@ -229,7 +229,7 @@ def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
 
 def get_oracle_df(sim_opts, with_cost=False):
     wall_mgr = sim_opts.create_manager_for_wall()
-    wall_mgr.run()
+    wall_mgr.run_dynamic()
     oracle_df, cost = oracle_ranking(df=wall_mgr.state.get_dataframe(),
                                      sim_opts=sim_opts)
 
@@ -544,13 +544,14 @@ def add_perf(op, df, sim_opts):
 
     op['avg_rank'] = average_rank(df, sim_opts=sim_opts)
     op['r_2'] =  int_r_2(df, sim_opts=sim_opts)
-    op['world_events'] = np.sum(df.src_id != sim_opts.src_id)
+    op['world_events'] = len(df.event_id[df.src_id != sim_opts.src_id].unique())
+    op['broadcaster_events'] = len(df.event_id[df.src_id == sim_opts.src_id].unique())
 
 
 def worker_opt(params):
     seed, sim_opts, queue = params
     sim_mgr = sim_opts.create_manager_with_opt(seed=seed)
-    sim_mgr.run()
+    sim_mgr.run_dynamic()
     df = sim_mgr.state.get_dataframe()
     # If Capacity if calculated this way, then the Optimal Broadcaster
     # May end up with number of tweets higher than the number of tweets
@@ -577,7 +578,7 @@ def worker_opt(params):
 def worker_poisson(params):
     seed, capacity, sim_opts, queue = params
     sim_mgr = sim_opts.create_manager_with_poisson(seed=seed, capacity=capacity)
-    sim_mgr.run()
+    sim_mgr.run_dynamic()
     op = {
         'type': 'Poisson',
         'seed': seed,
@@ -601,7 +602,7 @@ def worker_oracle(params):
     oracle_df = opt_oracle['df']
     opt_oracle_mgr = sim_opts.create_manager_with_times(oracle_df.t[oracle_df.events == 1] +
                                                         perf_opts.oracle_eps)
-    opt_oracle_mgr.run()
+    opt_oracle_mgr.run_dynamic()
     df = opt_oracle_mgr.state.get_dataframe()
 
     op = {
@@ -630,7 +631,7 @@ def worker_kdd(params):
 
     if world_changing_rates is None:
         wall_mgr = sim_opts.create_manager_for_wall()
-        wall_mgr.run()
+        wall_mgr.run_dynamic()
         wall_df = wall_mgr.state.get_dataframe()
         seg_idx = (wall_df.t.values / T * num_segments).astype(int)
         wall_intensities = wall_df.groupby(seg_idx).size() / (T / num_segments)
@@ -692,10 +693,11 @@ def worker_kdd(params):
             change_times=np.arange(num_segments) * seg_len,
             rates=kdd_opt / seg_len
         )
-        piecewise_const_mgr.run()
+        piecewise_const_mgr.run_dynamic()
         df = piecewise_const_mgr.state.get_dataframe()
         perf = time_in_top_k(df=df, K=k, sim_opts=sim_opts)
         op['top_' + str(k)] = perf
+        op['top_' + str(k) + '_num_events'] = len(df.events[df.src_id == sim_opts.src_id].unique())
 
         avg_rank = average_rank(df, sim_opts=sim_opts)
         r_2 = int_r_2(df, sim_opts=sim_opts)
