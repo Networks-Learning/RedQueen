@@ -27,12 +27,14 @@ class Event:
 
 class State:
     def __init__(self, cur_time, sink_ids):
-        self.num_sinks      = len(sink_ids)
-        self.time           = cur_time
-        self.sinks          = dict((x,[]) for x in sink_ids)
-        self.events         = []
-        self.track_src_id   = None
-        self._tracked_ranks = None
+        self.num_sinks        = len(sink_ids)
+        self.time             = cur_time
+        self.sinks            = dict((x,[]) for x in sink_ids)
+        self.walls_updated    = False
+        self.events           = []
+        self.track_src_id     = None
+        self._tracked_ranks   = None
+        self._sorted_sink_ids = sorted(self.sinks.keys())
 
 
     def set_track_src_id(self, src_id):
@@ -40,7 +42,16 @@ class State:
         # Assume that the rank person tweeted first.
         self._tracked_ranks = dict((sink_id, 0) for sink_id in self.sinks.keys())
 
-    def apply_event(self, event):
+    def update_walls(self):
+        """Adds the events to the walls. Needed for calculating the ranks."""
+        assert not self.walls_updated
+        self.walls_updated = True
+        for ev in self.events:
+            for sink_id in ev.sink_id:
+                self.sinks[sink_id].append(ev)
+
+
+    def apply_event(self, event, force_wall_update=False):
         """Apply the given event to the state."""
         if event is None:
             # This was the first event, ignore
@@ -49,10 +60,6 @@ class State:
         self.events.append(event)
         self.time += event.time_delta
 
-        # Add the event (tweet) to the corresponding lists
-        for sink_id in event.sink_ids:
-            self.sinks[sink_id].append(event)
-
         if self.track_src_id is not None:
             if event.src_id == self.track_src_id:
                 self._tracked_ranks = dict((sink_id, 0) for sink_id in self.sinks.keys())
@@ -60,7 +67,12 @@ class State:
                 for sink_id in event.sink_ids:
                     self._tracked_ranks[sink_id] += 1
 
-
+        if force_wall_update:
+            self.walls_updated = True
+            # Add the event (tweet) to the corresponding lists
+            # But do this only when requested.
+            for sink_id in event.sink_ids:
+                self.sinks[sink_id].append(event)
 
     def get_dataframe(self):
         """Return the list of events."""
@@ -82,6 +94,10 @@ class State:
         be formed after sorting the sink_ids.
         """
         if self.track_src_id != src_id or force_recalc:
+
+            if not self.walls_updated:
+                self.update_walls()
+
             rank = dict((sink_id, None) for sink_id in follower_ids)
             for sink_id in follower_ids:
                 for ii in range(len(self.sinks[sink_id]) - 1, -1, -1):
@@ -94,7 +110,7 @@ class State:
         if dict_form:
             return rank
         else:
-            return np.asarray([rank[sink_id] for sink_id in sorted(rank.keys())])
+            return np.asarray([rank[sink_id] for sink_id in self._sorted_sink_ids])
 
 
 class Manager:
@@ -171,7 +187,7 @@ class Manager:
                                            src.src_id)
                                           for src in self.sources)[0]
 
-            assert t_delta >= 0, "Next event must be now or in the future."
+            # assert t_delta >= 0, "Next event must be now or in the future."
 
             # Step 5: If cur_time + t_delta < end_time, go to step 4, else Step 7
             cur_time = self.state.time
@@ -233,7 +249,7 @@ class Manager:
             else:
                 t_delta, next_src_id = np.inf, None
 
-            assert t_delta >= 0, "Next event must be now or in the future."
+            # assert t_delta >= 0, "Next event must be now or in the future."
 
             cur_time = self.state.time
 

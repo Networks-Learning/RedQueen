@@ -38,7 +38,7 @@ def is_sorted(x, ascending=True):
 def rank_of_src_in_df(df, src_id, fill=True, with_time=True):
     """Calculates the rank of the src_id at each time instant in the list of events."""
 
-    assert is_sorted(df.t.values), "Array not sorted by time."
+    # assert is_sorted(df.t.values), "Array not sorted by time."
 
     def steps_to(x):
         return (np.arange(1, len(x) + 1) -
@@ -71,7 +71,8 @@ def u_int_opt(df, src_id=None, end_time=None, q_vec=None, s=None,
     if follower_ids is None:
         follower_ids = sorted(df.sink_id[df.src_id == src_id].unique())
     else:
-        assert is_sorted(follower_ids)
+        pass
+        # assert is_sorted(follower_ids)
 
     r_t      = rank_of_src_in_df(df, src_id)
     u_values = r_t[follower_ids].values.dot(np.sqrt(q_vec / s))
@@ -180,7 +181,7 @@ def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
     q_vec = sim_opts.q_vec
     s = sim_opts.s
 
-    assert is_sorted(df.t.values), "Dataframe is not sorted by time."
+    # assert is_sorted(df.t.values), "Dataframe is not sorted by time."
     event_times = df.groupby('event_id').t.mean()
 
     n = event_times.shape[0]
@@ -431,7 +432,7 @@ def calc_q_capacity_iter(sim_opts, s, seeds=None, parallel=True, dynamic=True):
     capacities = np.zeros(len(seeds), dtype=float)
     if not parallel:
         for idx, seed in enumerate(seeds):
-            m = sim_opts.create_manager(seed)
+            m = sim_opts.create_manager_with_opt(seed)
             if dynamic:
                 m.run_dynamic()
             else:
@@ -557,14 +558,19 @@ def worker_opt(params):
     # May end up with number of tweets higher than the number of tweets
     # produced by the rest of the world.
     # capacity = u_int_opt(df=df, sim_opts=sim_opts)
-    capacity = (df.src_id == sim_opts.src_id).sum() * 1.0
+
+    # Note: this works only if the optimal follower has exactly one follower. It is better to count the number
+    # of distinct times that the optimal broadcaster tweeted.
+    # capacity = (df.src_id == sim_opts.src_id).sum() * 1.0
+    num_events = len(df.event_id[df.src_id == sim_opts.src_id].unique())
+    capacity = num_events * 1.0
     op = {
         'type'       : 'Opt',
         'seed'       : seed,
         'capacity'   : capacity,
         'sim_opts'   : sim_opts,
         's'          : sim_opts.s,
-        'num_events' : np.sum(df.src_id == sim_opts.src_id)
+        'num_events' : num_events
     }
 
     add_perf(op, df, sim_opts)
