@@ -47,7 +47,7 @@ class State:
         assert not self.walls_updated
         self.walls_updated = True
         for ev in self.events:
-            for sink_id in ev.sink_id:
+            for sink_id in ev.sink_ids:
                 self.sinks[sink_id].append(ev)
 
 
@@ -76,6 +76,7 @@ class State:
 
     def get_dataframe(self):
         """Return the list of events."""
+        # Using a list here appears faster than using a generator expression
         df = pd.DataFrame.from_records(
             [{'event_id'   : x.event_id,
               'time_delta' : x.time_delta,
