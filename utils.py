@@ -531,12 +531,12 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
 ## Workers for metrics
 
 
-Ks=[1, 3, 5, 10, 20]
+Ks = [1, 5, 10]
 perf_opts = Options(oracle_eps=1e-10, # This is how much after the event that the Oracle tweets.
                     Ks=Ks,
                     performance_fields=['seed', 's', 'type'] +
                                        ['top_' + str(k) for k in Ks] +
-                                       ['avg_rank', 'r_2', 'world_events'])
+                                       ['avg_rank', 'r_2', 'num_events', 'world_events'])
 
 
 def add_perf(op, df, sim_opts):
@@ -546,7 +546,7 @@ def add_perf(op, df, sim_opts):
     op['avg_rank'] = average_rank(df, sim_opts=sim_opts)
     op['r_2'] =  int_r_2(df, sim_opts=sim_opts)
     op['world_events'] = len(df.event_id[df.src_id != sim_opts.src_id].unique())
-    op['broadcaster_events'] = len(df.event_id[df.src_id == sim_opts.src_id].unique())
+    op['num_events'] = len(df.event_id[df.src_id == sim_opts.src_id].unique())
 
 
 def worker_opt(params):
@@ -606,6 +606,9 @@ def worker_oracle(params):
     seed, capacity, max_events, sim_opts, queue = params
     opt_oracle = find_opt_oracle(capacity, sim_opts, max_events=max_events)
     oracle_df = opt_oracle['df']
+
+    # TODO: This method of extracting times works before oracle is always run only
+    # for one follower.
     opt_oracle_mgr = sim_opts.create_manager_with_times(oracle_df.t[oracle_df.events == 1] +
                                                         perf_opts.oracle_eps)
     opt_oracle_mgr.run_dynamic()
@@ -628,13 +631,9 @@ def worker_oracle(params):
 
     return op
 
-def worker_real_data(params):
-    user_event_times, sim_opts, queue = params
-    user = RealData() # FIXME
 
 
-
-def worker_kdd(params):
+def worker_kdd(params, verbose=False):
     seed, capacity, num_segments, sim_opts, world_changing_rates, queue = params
 
     T = sim_opts.end_time
@@ -654,7 +653,7 @@ def worker_kdd(params):
     follower_weights = [1.0]
 
     upper_bounds = np.array([1e11] * num_segments)
-    threshold = 0.005
+    threshold = 0.02
 
     op = {
         'type'     : 'kdd',
@@ -667,30 +666,46 @@ def worker_kdd(params):
     best_r_2, best_r_2_k = np.inf, -1
 
     for k in perf_opts.Ks:
-        def _util(x):
-            return Bopt.utils.weighted_top_k(x,
-                                             follower_wall_intensities,
-                                             follower_conn_prob,
-                                             follower_weights,
-                                             k)
-        def _util_grad(x):
-            return Bopt.utils.weighted_top_k_grad(x,
-                                                  follower_wall_intensities,
-                                                  follower_conn_prob,
-                                                  follower_weights,
-                                                  k)
+        if k != 1:
+            def _util(x):
+                return Bopt.utils.weighted_top_k(x,
+                                                 follower_wall_intensities,
+                                                 follower_conn_prob,
+                                                 follower_weights,
+                                                 k)
+            def _util_grad(x):
+                return Bopt.utils.weighted_top_k_grad(x,
+                                                      follower_wall_intensities,
+                                                      follower_conn_prob,
+                                                      follower_weights,
+                                                      k)
+        else:
+
+            # For k = 1, special case of gradient calculation
+            def _util(x):
+                return Bopt.utils.weighted_top_one(x,
+                                                 follower_wall_intensities,
+                                                 follower_conn_prob,
+                                                 follower_weights)
+            def _util_grad(x):
+                return Bopt.utils.weighted_top_one_grad(x,
+                                                      follower_wall_intensities,
+                                                      follower_conn_prob,
+                                                      follower_weights)
 
         # Initial guess is close to Poisson solution
         x0 = np.ones(num_segments) * capacity / num_segments
 
-        kdd_opt, iters = Bopt.optimize(util=_util,
-                                util_grad=_util_grad,
-                                budget=capacity,
-                                upper_bounds=upper_bounds,
-                                threshold=threshold,
-                                x0=x0,
-                                verbose=True,
-                                with_iter=True)
+        kdd_opt, iters = Bopt.optimize(
+            util         = _util,
+            util_grad    = _util_grad,
+            budget       = capacity,
+            upper_bounds = upper_bounds,
+            threshold    = threshold,
+            x0           = x0,
+            verbose      = verbose,
+            with_iter    = True
+        )
 
         op['kdd_opt_' + str(k)] = kdd_opt
         op['kdd_opt_iters_' + str(k)] = iters
@@ -783,6 +798,17 @@ def extract_perf_fields(return_obj):
     return result_dict
 
 
+real_performance_fields = [x for x in perf_opts.performance_fields if x != 's']
+def extract_real_perf_fields(return_obj):
+    """Extracts the relevant fields from the return object and returns them in a new dict."""
+    result_dict = {}
+    for field in real_performance_fields:
+        result_dict[field] = return_obj[field]
+
+    return result_dict
+
+
+
 @optioned(option_arg='opts')
 def run_inference(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low):
     """Run inference for the given sim_opts_gen by sweeping over 's' and
@@ -843,12 +869,12 @@ def run_inference(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low):
                 # KDD solution
 
                 # kdd_args = (seed, capacity, num_segments, sim_opts, world_changing_rates, queue)
-                kdd_args = (seed, capacity, num_segments, sim_opts, None, queue)
-                p = mp.Process(target=worker_kdd, args=(kdd_args,))
-                processes.append(p)
-                p.daemon = True
-                p.start()
-                active_processes += 1
+                # kdd_args = (seed, capacity, num_segments, sim_opts, None, queue)
+                # p = mp.Process(target=worker_kdd, args=(kdd_args,))
+                # processes.append(p)
+                # p.daemon = True
+                # p.start()
+                # active_processes += 1
 
             elif r['type'] == 'Poisson':
                 if active_processes % 10 == 0:
@@ -971,8 +997,8 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
                     add_task('Oracle', (seed, capacity, world_events, sim_opts))
                     active_procs += 1
 
-                    add_task('kdd', (seed, capacity, num_segments, sim_opts, None))
-                    active_procs += 1
+                    # add_task('kdd', (seed, capacity, num_segments, sim_opts, None))
+                    # active_procs += 1
 
         for p in range(num_procs):
             in_queue.put(('Stop', None))
@@ -992,5 +1018,390 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
     return Options(df=pd.DataFrame.from_records(results),
                    raw_results = raw_results,
                    capacities=capacities)
+
+
+## Workers for real data
+
+def real_worker_base(params):
+    user_id, user_event_times, sim_opts, queue = params
+    user_mgr = sim_opts.create_manager_with_times(user_event_times)
+    user_mgr.run_dynamic()
+
+    op = {
+        'user_id'  : user_id,
+        'type'     : 'RealData',
+        'seed'     : 0,
+        'sim_opts' : sim_opts,
+        'capacity' : len(user_event_times) * 1.0
+    }
+
+    add_perf(op, user_mgr.state.get_dataframe(), sim_opts)
+
+    if queue is not None:
+        queue.put(op)
+
+    return op
+
+
+def real_worker_poisson(params):
+    user_id, seeds, user_budget, sim_opts, queue = params
+
+    ops = []
+    for seed in seeds:
+        poisson_mgr = sim_opts.create_manager_with_poisson(seed, capacity=user_budget)
+        poisson_mgr.run_dynamic()
+
+        op = {
+            'user_id'  : user_id,
+            'sim_opts' : sim_opts,
+            'seed'     : seed,
+            'type'     : 'Poisson'
+        }
+
+        add_perf(op, poisson_mgr.state.get_dataframe(), sim_opts)
+
+        if queue is not None:
+            queue.put(op)
+
+        ops.append(op)
+
+    return ops
+
+
+def real_worker_opt(params, verbose=False):
+    user_id, seeds, num_user_events, sim_opts, queue = params
+    s_opt = sweep_s(sim_opts, capacity_cap=num_user_events, tol=0.05, dynamic=True, verbose=verbose)
+    opt_sim_opts = sim_opts.update({ 's' : s_opt })
+
+    ops = []
+    for seed in seeds:
+        opt_mgr = opt_sim_opts.create_manager_with_opt(seed)
+        opt_mgr.run_dynamic()
+        df = opt_mgr.state.get_dataframe()
+
+        num_events = len(df.event_id[df.src_id == sim_opts.src_id].unique())
+        capacity = num_events * 1.0
+
+        op = {
+            'user_id'    : user_id,
+            'seed'       : seed,
+            's_opt'      : s_opt,
+            'capacity'   : capacity,
+            'sim_opts'   : sim_opts,
+            'num_events' : num_events,
+            'type'       : 'Opt'
+        }
+
+        add_perf(op, df, sim_opts)
+
+        if queue is not None:
+            queue.put(op)
+
+        ops.append(op)
+
+    return ops
+
+
+def _follower_intensity_factory(T, num_segments):
+    """Returns a function which can calculate the intensities for one user."""
+    # Assumption: start time is always zero
+    seg_len = T / num_segments
+
+    def _follower_intensity_calc(x):
+        seg_idx = (x.t.values / T * num_segments).astype(int)
+        assert is_sorted(x.t.values)
+        ret_val = x.groupby(seg_idx).size() / seg_len
+        ret_val.index.rename('segment', inplace=True)
+        return ret_val
+
+    return _follower_intensity_calc
+
+
+def real_worker_kdd(params, verbose=False):
+    user_id, seeds, budget, num_segments, sim_opts, queue = params
+
+    T = sim_opts.end_time
+    seg_len = T / num_segments
+    num_followers = len(sim_opts.sink_ids)
+
+    wall_mgr = sim_opts.create_manager_for_wall()
+    wall_mgr.run_dynamic()
+    wall_df = wall_mgr.state.get_dataframe()
+
+    # f_i_c = _follower_intensity_factory(T, num_segments)
+    # wall_flat = (wall_df.groupby('sink_id')
+    #                 .apply(f_i_c)
+    #                 .reset_index())
+
+    # print('columns = {}'.format(wall_flat.columns))
+
+    # wall_intensities = (wall_flat.pivot_table(values=0, index='sink_id', columns='segment'))
+
+    # followers_wall_intensities = wall_intensities.fillna(0).values
+
+    followers_wall_intensities = np.zeros((num_followers, num_segments), dtype=float)
+
+    for idx, sink_id in enumerate(sim_opts.sink_ids):
+        df = wall_df[wall_df.sink_id == sink_id]
+        for seg_idx in range(num_segments):
+            followers_wall_intensities[idx, seg_idx] = np.sum((df.t >= seg_idx * seg_len) & (df.t <= (seg_idx + 1) * seg_len)) / seg_len
+
+    followers_conn_prob = np.ones((num_followers, num_segments), dtype=float)
+    followers_weights = np.ones(num_followers) / num_followers
+
+    upper_bounds = np.array([1e11] * num_segments)
+    threshold = 0.02
+
+    kdd_opts = []
+    iters_ = []
+    ops = []
+
+    for k in Ks:
+        if k != 1:
+            def _util(x):
+                return Bopt.utils.weighted_top_k(x,
+                                                 followers_wall_intensities,
+                                                 followers_conn_prob,
+                                                 followers_weights,
+                                                 k)
+            def _util_grad(x):
+                return Bopt.utils.weighted_top_k_grad(x,
+                                                      followers_wall_intensities,
+                                                      followers_conn_prob,
+                                                      followers_weights,
+                                                      k)
+        else:
+            # For k = 1, special case of gradient calculation
+            def _util(x):
+                return Bopt.utils.weighted_top_one(x,
+                                                 followers_wall_intensities,
+                                                 followers_conn_prob,
+                                                 followers_weights)
+            def _util_grad(x):
+                return Bopt.utils.weighted_top_one_grad(x,
+                                                      followers_wall_intensities,
+                                                      followers_conn_prob,
+                                                      followers_weights)
+
+
+        x0 = np.ones(num_segments) * budget / num_segments
+
+        kdd_opt, iters = Bopt.optimize(
+            util         = _util,
+            util_grad    = _util_grad,
+            budget       = budget,
+            upper_bounds = upper_bounds,
+            threshold    = threshold,
+            x0           = x0,
+            verbose      = verbose,
+            with_iter    = True
+        )
+
+        if verbose:
+            logTime('Done for user_id = {}, k = {} in {} iterations'.format(user_id, k, iters))
+
+        kdd_opts.append(kdd_opt)
+        iters_.append(iters)
+
+    for seed in seeds:
+        best_avg_rank, best_avg_k = np.inf, -1
+        best_r_2, best_r_2_k = np.inf, -1
+
+        op = {
+            'user_id'  : user_id,
+            'type'     : 'kdd',
+            'seed'     : seed,
+            'sim_opts' : sim_opts,
+        }
+
+        for k_idx, k in enumerate(Ks):
+            kdd_opt = kdd_opts[k_idx]
+            op['kdd_opt_' + str(k)] = kdd_opt
+            op['kdd_opt_iters_' + str(k)] = iters_[k_idx]
+
+            piecewise_const_mgr = sim_opts.create_manager_with_piecewise_const(
+                seed=seed,
+                change_times=np.arange(num_segments) * seg_len,
+                rates=kdd_opt / seg_len
+            )
+            piecewise_const_mgr.run_dynamic()
+            df = piecewise_const_mgr.state.get_dataframe()
+            perf = time_in_top_k(df=df, K=k, sim_opts=sim_opts)
+
+            op['top_' + str(k)] = perf
+            op['top_' + str(k) + '_num_events'] = len(df.event_id[df.src_id == sim_opts.src_id].unique())
+
+            avg_rank = average_rank(df, sim_opts=sim_opts)
+            r_2 = int_r_2(df, sim_opts=sim_opts)
+
+            op['avg_rank_' + str(k)] = avg_rank
+            op['r_2_' + str(k)] = r_2
+
+            if avg_rank < best_avg_rank:
+                best_avg_rank = avg_rank
+                best_avg_k = k
+
+            if r_2 < best_r_2:
+                best_r_2 = r_2
+                best_r_2_k = k
+
+        op['avg_rank']   = best_avg_rank
+        op['avg_rank_k'] = best_avg_k
+        op['r_2']        = best_r_2
+        op['r_2_k']      = best_r_2_k
+
+        # These just record the last value.
+        op['world_events'] = len(df.event_id[df.src_id != sim_opts.src_id].unique())
+        op['num_events'] = len(df.event_id[df.src_id == sim_opts.src_id].unique())
+
+        if queue is not None:
+            queue.put(op)
+
+        ops.append(op)
+
+    return ops
+
+
+import pickle
+
+@optioned(option_arg='opts')
+def run_real_queue(N, num_segments, files_user_ids, min_user_capacity=2, num_procs=None, raw_results=None):
+    """Run inference for the given sim_opts_gen by sweeping over 's' and
+    running the simulation for different seeds."""
+
+    if num_procs is None:
+        num_procs = mp.cpu_count() - 1
+
+    if raw_results is None:
+        raw_results = []
+    elif len(raw_results) != 0:
+        print('raw_results passed are not empty, want to continue [y/n]?')
+        ans = input('Continue [Y/n]?')
+        if ans[0] != 'Y':
+            return None
+
+    def worker(input_queue, output_queue):
+        while True:
+            broadcaster_type, broadcaster_args = input_queue.get()
+
+            if broadcaster_type == 'Stop':
+                break
+
+            try:
+                all_args = broadcaster_args + (output_queue,)
+                if broadcaster_type == 'RealData':
+                    real_worker_base(all_args)
+                elif broadcaster_type == 'Poisson':
+                    real_worker_poisson(all_args)
+                elif broadcaster_type == 'Opt':
+                    real_worker_opt(all_args)
+                elif broadcaster_type == 'kdd':
+                    real_worker_kdd(all_args)
+                else:
+                    raise RuntimeError('Unknown broadcaster type: {}'.format(broadcaster_type))
+            except Exception as e:
+                output_queue.put({
+                    'type'             : 'Exception',
+                    'error'            : e,
+                    'broadcaster_type' : broadcaster_type,
+                    'broadcaster_args' : broadcaster_args
+                })
+                raise
+
+    in_queue = mp.Queue()
+    out_queue = mp.Queue()
+    results = []
+    capacities = {}
+
+    # Start consumers
+    processes = [mp.Process(target=worker, args=(in_queue, out_queue))
+                 for _ in range(num_procs)]
+
+    for p in processes:
+        # p.daemon = True # Terminate if the parent dies.
+        # The process may itself start a pool of processes.
+        p.start()
+
+    active_procs = 0
+    type_procs = defaultdict(lambda: 0)
+
+    def add_task(task_type, args):
+        in_queue.put((task_type, args))
+
+    try:
+        for user_file, user_id in files_user_ids:
+            with open(user_file, 'rb') as pickle_file:
+                d = pickle.load(pickle_file)
+                if d['num_user_events'] <= min_user_capacity:
+                    logTime('User {} had only {} tweets, ignoring.'.format(user_id, d['num_user_events']))
+                else:
+                    sim_opts = SimOpts(**d['sim_opts_dict'])
+                    if len(sim_opts.sink_ids) > 1:
+                        in_queue.put(('RealData', (user_id, d['user_event_times'], sim_opts)))
+                        active_procs += 1
+                    else:
+                        logTime('User {} has no followers.'.format(user_id))
+
+        type_procs['RealData'] = active_procs
+        sub_task_size = N
+        while active_procs > 0:
+            r = out_queue.get()
+            active_procs -= 1
+            type_procs[r['type']] -= 1
+
+            if active_procs % 10 == 0:
+                logTime('active_procs = {}, procs = {}'
+                        .format(active_procs, list(type_procs.items())))
+
+            if r['type'] == 'Exception':
+                print('Exception while handling: ', r)
+            else:
+                raw_results.append(r)
+                results.append(extract_real_perf_fields(r))
+
+                if r['type'] == 'RealData':
+                    seeds = range(N)
+                    capacity = r['capacity']
+                    sim_opts = r['sim_opts']
+                    user_id = r['user_id']
+                    world_events = r['world_events']
+
+                    add_task('Poisson', (user_id, seeds, capacity, sim_opts))
+                    active_procs += sub_task_size
+                    type_procs['Poisson'] += sub_task_size
+
+                    add_task('Opt', (user_id, seeds, capacity, sim_opts))
+                    active_procs += sub_task_size
+                    type_procs['Opt'] += sub_task_size
+
+                    add_task('kdd', (user_id, seeds, capacity, num_segments, sim_opts))
+                    active_procs += sub_task_size
+                    type_procs['kdd'] += sub_task_size
+
+                    # add_task('Oracle', (seed, capacity, world_events, sim_opts))
+                    # active_procs += 1
+
+                    # add_task('kdd', (seed, capacity, num_segments, sim_opts, None))
+                    # active_procs += 1
+
+        for p in range(num_procs):
+            in_queue.put(('Stop', None))
+
+    except:
+        # In case of exceptions, do not block the parent thread and just
+        # discard all data on the queues.
+        in_queue.cancel_join_thread()
+        out_queue.cancel_join_thread()
+        raise
+    finally:
+        print('Cleaning up {} processes'.format(len(processes)))
+        for p in processes:
+            p.terminate()
+            p.join()
+
+    return Options(df=pd.DataFrame.from_records(results),
+                   raw_results = raw_results,
+                   capacities=capacities)
+
 
 
