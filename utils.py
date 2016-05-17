@@ -798,7 +798,7 @@ def extract_perf_fields(return_obj):
     return result_dict
 
 
-real_performance_fields = [x for x in perf_opts.performance_fields if x != 's']
+real_performance_fields = [x for x in perf_opts.performance_fields if x != 's'] + ['user_id']
 def extract_real_perf_fields(return_obj):
     """Extracts the relevant fields from the return object and returns them in a new dict."""
     result_dict = {}
