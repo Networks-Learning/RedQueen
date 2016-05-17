@@ -512,6 +512,34 @@ class PiecewiseConst(Broadcaster):
         self.times        = None
         self.t_diff       = None
         self.start_idx    = None
+        self.is_dynamic   = False
+
+    def initialize(self):
+        self.init = True
+        assert self.start_time <= self.change_times[0]
+        assert self.end_time   >= self.change_times[-1]
+
+        duration = self.end_time - self.start_time
+        max_rate = np.max(self.rates)
+
+        # Using thinning to determine the event times.
+        num_all_events = self.random_state.poisson(max_rate * duration)
+        all_event_times = self.random_state.uniform(low=self.start_time,
+                                                    high=self.end_time,
+                                                    size=num_all_events)
+        thinned_event_times = []
+        for t in sorted(all_event_times):
+            # Rejection sampling
+            if self.random_state.rand() < self.get_rate(t) / max_rate:
+                thinned_event_times.append(t)
+
+        self.times = np.concatenate([[self.start_time], thinned_event_times])
+        self.t_diff = np.diff(self.times)
+        self.start_idx = 0
+
+    def get_all_times(self):
+        assert self.init
+        return self.times[1:]
 
     def get_rate(self, t):
         """Finds what the instantaneous rate at time 't' is."""
@@ -519,28 +547,7 @@ class PiecewiseConst(Broadcaster):
 
     def get_next_interval(self, event):
         if not self.init:
-            self.init = True
-
-            assert self.start_time <= self.change_times[0]
-            assert self.end_time   >= self.change_times[-1]
-
-            duration = self.end_time - self.start_time
-            max_rate = np.max(self.rates)
-
-            # Using thinning to determine the event times.
-            num_all_events = self.random_state.poisson(max_rate * duration)
-            all_event_times = self.random_state.uniform(low=self.start_time,
-                                                        high=self.end_time,
-                                                        size=num_all_events)
-            thinned_event_times = []
-            for t in sorted(all_event_times):
-                # Rejection sampling
-                if self.random_state.rand() < self.get_rate(t) / max_rate:
-                    thinned_event_times.append(t)
-
-            self.times = np.concatenate([[self.start_time], thinned_event_times])
-            self.t_diff = np.diff(self.times)
-            self.start_idx = 0
+            self.initialize()
 
         if event is None:
             return self.t_diff[0]
