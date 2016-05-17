@@ -92,7 +92,7 @@ def time_in_top_k(df, K, src_id=None, end_time=None, sim_opts=None):
         end_time     = mb(end_time, sim_opts.end_time)
 
     r_t      = rank_of_src_in_df(df, src_id)
-    I_values = np.where(r_t.mean(1) <= K - 1, 1.0, 0.0)
+    I_values = np.where(r_t <= K - 1, 1.0, 0.0).mean(1)
     I_dt     = np.diff(np.concatenate([r_t.index.values, [end_time]]))
 
     return np.sum(I_values * I_dt)
