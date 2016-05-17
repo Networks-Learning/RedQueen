@@ -1425,6 +1425,13 @@ def change_sim_opts(d):
     d2['sim_opts_dict'] = d['sim_opts'].get_dict()
     return d2
 
+def revert_to_sim_opts(d):
+    d2 = d.copy()
+    del d2['sim_opts_dict']
+    d2['sim_opts'] = SimOpts(**d['sim_opts_dict'])
+    return d2
+
+
 def get_savable_raw_results(r):
     return [change_sim_opts(d) for d in r]
 
