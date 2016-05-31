@@ -531,7 +531,8 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
 ## Workers for metrics
 
 
-Ks = [1, 5, 10]
+# Ks = [1, 5, 10]
+Ks = [1, 5]
 perf_opts = Options(oracle_eps=1e-10, # This is how much after the event that the Oracle tweets.
                     Ks=Ks,
                     performance_fields=['seed', 's', 'type'] +
@@ -569,8 +570,7 @@ def worker_opt(params):
         'seed'       : seed,
         'capacity'   : capacity,
         'sim_opts'   : sim_opts,
-        's'          : sim_opts.s,
-        'num_events' : num_events
+        's'          : sim_opts.s
     }
 
     add_perf(op, df, sim_opts)
@@ -585,14 +585,13 @@ def worker_poisson(params):
     seed, capacity, sim_opts, queue = params
     sim_mgr = sim_opts.create_manager_with_poisson(seed=seed, capacity=capacity)
     sim_mgr.run_dynamic()
+    df = sim_mgr.state.get_dataframe()
     op = {
         'type': 'Poisson',
         'seed': seed,
         'sim_opts': sim_opts,
         's': sim_opts.s
     }
-
-    df = sim_mgr.state.get_dataframe()
 
     add_perf(op, df, sim_opts)
 
@@ -633,7 +632,7 @@ def worker_oracle(params):
 
 
 
-def worker_kdd(params, verbose=False):
+def worker_kdd(params, verbose=False, Ks=None):
     seed, capacity, num_segments, sim_opts, world_changing_rates, queue = params
 
     T = sim_opts.end_time
@@ -665,7 +664,10 @@ def worker_kdd(params, verbose=False):
     best_avg_rank, best_avg_k = np.inf, -1
     best_r_2, best_r_2_k = np.inf, -1
 
-    for k in perf_opts.Ks:
+    if Ks is None:
+        Ks = perf_opts.Ks
+
+    for k in Ks:
         if k != 1:
             def _util(x):
                 return Bopt.utils.weighted_top_k(x,
@@ -744,7 +746,8 @@ def worker_kdd(params, verbose=False):
     op['avg_rank_k'] = best_avg_k
     op['r_2']        = best_r_2
     op['r_2_k']      = best_r_2_k
-    op['world_events'] = np.sum(df.src_id != sim_opts.src_id)
+    op['world_events'] = len(df.event_id[df.src_id != sim_opts.src_id].unique())
+    op['num_events'] = len(df.event_id[df.src_id == sim_opts.src_id].unique())
 
     if queue is not None:
         queue.put(op)
@@ -760,7 +763,7 @@ def worker_kdd(params, verbose=False):
 dilation = 100.0
 simulation_opts = Options(world_rate=1000.0 / dilation, world_alpha=1.0, world_beta=10.0,
                           N=10, T=1.0 * dilation, num_segments=10,
-                          log_s_low=-8 + np.log10(dilation), log_s_high=1 + np.log10(dilation))
+                          log_s_low=-6 + np.log10(dilation), log_s_high=5 + np.log10(dilation))
 
 @optioned(option_arg='opts')
 def piecewise_sim_opt_factory(N, T, num_segments, world_rate, opts):
@@ -777,7 +780,7 @@ def piecewise_sim_opt_factory(N, T, num_segments, world_rate, opts):
 
 poisson_inf_opts = simulation_opts.set_new(
     sim_opts_gen=lambda seed: SimOpts.std_poisson(world_rate=simulation_opts.world_rate,
-                                                  world_seed=seed)
+                                                  world_seed=seed + 42)
                                      .update({ 'end_time': simulation_opts.T }))
 
 piecewise_inf_opts = piecewise_sim_opt_factory(opts=simulation_opts)
@@ -789,20 +792,26 @@ hawkes_inf_opts = simulation_opts.set_new(
                                      .update({ 'end_time': simulation_opts.T }))
 
 
-def extract_perf_fields(return_obj):
+def extract_perf_fields(return_obj, exclude_fields=None, include_fields=None):
     """Extracts the relevant fields from the return object and returns them in a new dict."""
     result_dict = {}
-    for field in perf_opts.performance_fields:
+    include_fields = include_fields if include_fields is not None else set()
+    exclude_fields = exclude_fields if exclude_fields is not None else set()
+    fields = set(perf_opts.performance_fields).union(include_fields) - exclude_fields
+    for field in fields:
         result_dict[field] = return_obj[field]
 
     return result_dict
 
 
 real_performance_fields = [x for x in perf_opts.performance_fields if x != 's'] + ['user_id']
-def extract_real_perf_fields(return_obj):
+def extract_real_perf_fields(return_obj, exclude_fields=None, include_fields=None):
     """Extracts the relevant fields from the return object and returns them in a new dict."""
     result_dict = {}
-    for field in real_performance_fields:
+    include_fields = include_fields if include_fields is not None else set()
+    exclude_fields = exclude_fields if exclude_fields is not None else set()
+    fields = set(real_performance_fields).union(include_fields) - exclude_fields
+    for field in fields:
         result_dict[field] = return_obj[field]
 
     return result_dict
@@ -899,6 +908,123 @@ def run_inference(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low):
 
     return Options(df=pd.DataFrame.from_records(results),
                    raw_results=raw_results,
+                   capacities=capacities)
+
+
+@optioned(option_arg='opts')
+def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low, num_procs=None):
+    """Run inference for the given sim_opts_gen by sweeping over 's' and
+    running the simulation for different seeds."""
+
+    if num_procs is None:
+        num_procs = mp.cpu_count() - 1
+
+    def worker(input_queue, output_queue):
+        while True:
+            broadcaster_type, broadcaster_args = input_queue.get()
+
+            if broadcaster_type == 'Stop':
+                break
+
+            try:
+                all_args = broadcaster_args + (output_queue,)
+                if broadcaster_type == 'Opt':
+                    worker_opt(all_args)
+                elif broadcaster_type == 'Poisson':
+                    worker_poisson(all_args)
+                elif broadcaster_type == 'Oracle':
+                    worker_oracle(all_args)
+                elif broadcaster_type == 'kdd':
+                    worker_kdd(all_args)
+                else:
+                    raise RuntimeError('Unknown broadcaster type: {}'.format(broadcaster_type))
+            except Exception as e:
+                output_queue.put({
+                    'type'             : 'Exception',
+                    'error'            : e,
+                    'broadcaster_type' : broadcaster_type,
+                    'broadcaster_args' : broadcaster_args
+                })
+                raise
+
+    in_queue = mp.Queue()
+    out_queue = mp.Queue()
+    results = []
+    raw_results = []
+    capacities = {}
+
+    # Start consumers
+    processes = [mp.Process(target=worker, args=(in_queue, out_queue))
+                 for _ in range(num_procs)]
+
+    for p in processes:
+        p.daemon = True # Terminate if the parent dies.
+        p.start()
+
+    active_procs = 0
+    type_procs = defaultdict(lambda: 0)
+
+    def add_task(task_type, args):
+        in_queue.put((task_type, args))
+        type_procs[task_type] += 1
+
+    try:
+        for s in np.logspace(log_s_low, log_s_high, num=10):
+            capacities[s] = []
+            for seed in range(N):
+                in_queue.put(('Opt', (seed, sim_opts_gen(seed).update({ 's': s }))))
+                active_procs += 1
+
+        type_procs['Opt'] = active_procs
+        while active_procs > 0:
+            r = out_queue.get()
+            active_procs -= 1
+            type_procs[r['type']] -= 1
+
+            if active_procs % 10 == 0:
+                logTime('active_procs = {}, procs = {}'
+                        .format(active_procs, list(type_procs.items())))
+
+            if r['type'] == 'Exception':
+                print('Exception while handling: ', r)
+            else:
+                raw_results.append(r)
+                results.append(extract_perf_fields(r))
+
+                if r['type'] == 'Opt':
+                    seed = r['seed']
+                    capacity = r['capacity']
+                    s = r['sim_opts'].s
+                    sim_opts = r['sim_opts']
+                    world_events = r['world_events']
+                    capacities[s].append((seed, capacity))
+
+                    # add_task('Poisson', (seed, capacity, sim_opts))
+                    # active_procs += 1
+
+                    # add_task('Oracle', (seed, capacity, world_events, sim_opts))
+                    # active_procs += 1
+
+                    add_task('kdd', (seed, capacity, num_segments, sim_opts, None))
+                    active_procs += 1
+
+        for p in range(num_procs):
+            in_queue.put(('Stop', None))
+
+    except:
+        # In case of exceptions, do not block the parent thread and just
+        # discard all data on the queues.
+        in_queue.cancel_join_thread()
+        out_queue.cancel_join_thread()
+        raise
+    finally:
+        print('Cleaning up {} processes'.format(len(processes)))
+        for p in processes:
+            p.terminate()
+            p.join()
+
+    return Options(df=pd.DataFrame.from_records(results),
+                   raw_results = raw_results,
                    capacities=capacities)
 
 
