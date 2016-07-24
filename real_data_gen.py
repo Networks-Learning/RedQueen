@@ -2,6 +2,7 @@ from __future__ import print_function
 import broadcast.data.user_repo    as user_repo
 import broadcast.data.db_connector as db_connector
 import broadcast.data.hdfs         as hdfs
+import logging
 # Comment out while running from IPython to avoid reloading the module
 from opt_model import RealData, SimOpts
 from utils import is_sorted, logTime, def_q_vec
@@ -13,9 +14,33 @@ log = logTime if verbose else lambda *args, **kwargs: None
 
 def get_user_repository():
     """Generates the user-repository for a user."""
-    conn = db_connector.DbConnection(db_path='/dev/shm/db.sqlite3',
-                                     link_path='/dev/shm/links.sqlite3')
-    hdfs_loader = hdfs.HDFSLoader('/dev/shm/tweets_all.h5')
+    try:
+        conn = db_connector.DbConnection(db_path='/dev/shm/db.sqlite3',
+                                         link_path='/dev/shm/links.sqlite3')
+    except (OSError, IOError):
+        logging.warning('The SQLite files not found on /dev/shm, looking for them on local drives.')
+        try:
+            conn = db_connector.DbConnection(db_path='/local/moreka/db.sqlite3',
+                                             link_path='/local/moreka/links.sqlite3')
+        except (OSError, IOError):
+            try:
+                 conn = db_connector.DbConnection(db_path='/local/utkarshu/db.sqlite3',
+                                                 link_path='/local/utkarshu/links.sqlite3')
+            except (OSError, IOError):
+                raise IOError('The twitter DBs were not found.')
+
+
+    try:
+        hdfs_loader = hdfs.HDFSLoader('/dev/shm/tweets_all.h5')
+    except (OSError, IOError):
+        logging.warning('The HDF5 file not found on /dev/shm, looking for them on local drives.')
+        try:
+            hdfs_loader = hdfs.HDFSLoader('/local/moreka/tweets_all.h5')
+        except (OSError, IOError):
+            try:
+                hdfs_loader = hdfs.HDFSLoader('/local/utkarshu/tweets_all.h5')
+            except (OSError, IOError):
+                raise IOError('The HDF5 DB was not found.')
 
     return user_repo.HDFSSQLiteUserRepository(hdfs_loader, conn)
 
