@@ -285,7 +285,8 @@ class Manager:
 # Broadcasters
 ##############
 
-# TODO: Make Broadcasters serializable
+# Make Broadcasters serializable
+# -- The broadcasters do not need to be serializable, the sim_opts does.
 
 class Broadcaster:
     __metaclass__ = abc.ABCMeta
