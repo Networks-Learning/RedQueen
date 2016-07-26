@@ -2,6 +2,7 @@
 
 from __future__ import print_function
 import numpy as np
+import logging
 import pandas as pd
 import itertools as I
 import sys
@@ -160,7 +161,7 @@ class Manager:
 
     def run_till(self, end_time=None):
         if end_time is not None:
-            print('Warning: deprecation warning: end_time should not be set.')
+            logging.warn('Warning: deprecation warning: end_time should not be set.')
         else:
             end_time = self.end_time
 
@@ -330,7 +331,7 @@ class Broadcaster:
         ret_t_delta = self.last_self_event_time + self.t_delta - cur_time
 
         if ret_t_delta < 0:
-            print('returned t_delta = {} < 0, set to 0 instead.'.format(ret_t_delta), file=sys.stderr)
+            logging.warn('returned t_delta = {} < 0, set to 0 instead.'.format(ret_t_delta), file=sys.stderr)
             ret_t_delta = 0.0
 
         return ret_t_delta
