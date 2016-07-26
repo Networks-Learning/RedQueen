@@ -1,6 +1,7 @@
 # Helper functions
 
 import matplotlib
+import logging
 from matplotlib import pyplot as py
 from collections import defaultdict
 import multiprocessing as mp
@@ -186,7 +187,7 @@ def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
 
     n = event_times.shape[0]
     if n > 1e6:
-        print('Not running for n > 1e6 events')
+        logging.error('Not running for n > 1e6 events')
         return []
 
     w = np.diff(np.concatenate([[0.0], [0.0], event_times.values, [sim_opts.end_time]]))
@@ -366,7 +367,7 @@ def latexify(fig_width=None, fig_height=None, columns=1, largeFonts=False):
 
     MAX_HEIGHT_INCHES = 8.0
     if fig_height > MAX_HEIGHT_INCHES:
-        print("WARNING: fig_height too large:" + fig_height +
+        logging.warn("WARNING: fig_height too large:" + fig_height +
               "so will reduce to" + MAX_HEIGHT_INCHES + "inches.")
         fig_height = MAX_HEIGHT_INCHES
 
@@ -532,7 +533,8 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
 
 
 # Ks = [1, 5, 10]
-Ks = [1, 5]
+# Ks = [1, 5]
+Ks = [1]
 perf_opts = Options(oracle_eps=1e-10, # This is how much after the event that the Oracle tweets.
                     Ks=Ks,
                     performance_fields=['seed', 's', 'type'] +
@@ -643,13 +645,14 @@ def worker_kdd(params, verbose=False, Ks=None):
         wall_mgr.run_dynamic()
         wall_df = wall_mgr.state.get_dataframe()
         seg_idx = (wall_df.t.values / T * num_segments).astype(int)
-        wall_intensities = wall_df.groupby(seg_idx).size() / (T / num_segments)
+        intensity_df = (wall_df.groupby(['sink_id', pd.Series(seg_idx, name='segment')]).size() / (T / num_segments)).reset_index(name='intensity')
+        wall_intensities = intensity_df.pivot_table(values='intensity', index='sink_id', columns='segment').values
     else:
-        wall_intensities = world_changing_rates
+        wall_intensities = np.asarray(world_changing_rates)
 
-    follower_wall_intensities = np.array([wall_intensities])
-    follower_conn_prob = np.asarray([[1.0] * num_segments])
-    follower_weights = [1.0]
+    follower_wall_intensities = wall_intensities
+    follower_conn_prob = np.asarray([[1.0] * num_segments] * len(sim_opts.sink_ids))
+    follower_weights = [1.0] * len(sim_opts.sink_ids)
 
     upper_bounds = np.array([1e11] * num_segments)
     threshold = 0.02
@@ -713,7 +716,7 @@ def worker_kdd(params, verbose=False, Ks=None):
         op['kdd_opt_iters_' + str(k)] = iters
 
         if iters > 49900:
-            print('Setting {} took {} iters to converge.'.format(op, iters),
+            logging.warn('Setting {} took {} iters to converge.'.format(op, iters),
                   file=sys.stderr)
 
         piecewise_const_mgr = sim_opts.create_manager_with_piecewise_const(
@@ -901,7 +904,7 @@ def run_inference(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low):
                 raise ValueError('Unknown type: {}'.format(r['type']))
     finally:
         # Attempt at cleanup
-        print("Cleaning up {} processes".format(len(processes)))
+        logging.info("Cleaning up {} processes".format(len(processes)))
         for p in processes:
             p.terminate()
             p.join()
@@ -986,7 +989,7 @@ def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_
                         .format(active_procs, list(type_procs.items())))
 
             if r['type'] == 'Exception':
-                print('Exception while handling: ', r)
+                logging.error('Exception while handling: ', r)
             else:
                 raw_results.append(r)
                 results.append(extract_perf_fields(r))
@@ -1018,7 +1021,7 @@ def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_
         out_queue.cancel_join_thread()
         raise
     finally:
-        print('Cleaning up {} processes'.format(len(processes)))
+        logging.info('Cleaning up {} processes'.format(len(processes)))
         for p in processes:
             p.terminate()
             p.join()
@@ -1104,7 +1107,7 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
                         .format(active_procs, list(type_procs.items())))
 
             if r['type'] == 'Exception':
-                print('Exception while handling: ', r)
+                logging.error('Exception while handling: ', r)
             else:
                 raw_results.append(r)
                 results.append(extract_perf_fields(r))
@@ -1136,7 +1139,7 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
         out_queue.cancel_join_thread()
         raise
     finally:
-        print('Cleaning up {} processes'.format(len(processes)))
+        logging.info('Cleaning up {} processes'.format(len(processes)))
         for p in processes:
             p.terminate()
             p.join()
@@ -1144,6 +1147,124 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
     return Options(df=pd.DataFrame.from_records(results),
                    raw_results = raw_results,
                    capacities=capacities)
+
+
+# Experiment with multiple followers
+
+# TODO: Move prepare_multiple_followers_sim_opts into this file.
+
+@optioned(option_arg='opts')
+def run_multiple_followers(max_num_followers, num_segments, setup_opts, num_procs=None):
+    """Run experiment with multiple followers."""
+
+    if num_procs is None:
+        num_procs = mp.cpu_count() - 1
+
+    def worker(input_queue, output_queue):
+        while True:
+            broadcaster_type, broadcaster_args = input_queue.get()
+
+            if broadcaster_type == 'Stop':
+                break
+
+            try:
+                all_args = broadcaster_args + (output_queue,)
+                if broadcaster_type == 'Opt':
+                    worker_opt(all_args)
+                elif broadcaster_type == 'Poisson':
+                    worker_poisson(all_args)
+                elif broadcaster_type == 'Oracle':
+                    worker_oracle(all_args)
+                elif broadcaster_type == 'kdd':
+                    worker_kdd(all_args)
+                else:
+                    raise RuntimeError('Unknown broadcaster type: {}'.format(broadcaster_type))
+            except Exception as e:
+                output_queue.put({
+                    'type'             : 'Exception',
+                    'error'            : e,
+                    'broadcaster_type' : broadcaster_type,
+                    'broadcaster_args' : broadcaster_args
+                })
+                raise
+
+    in_queue = mp.Queue()
+    out_queue = mp.Queue()
+    results = []
+    raw_results = []
+
+    # Start consumers
+    processes = [mp.Process(target=worker, args=(in_queue, out_queue))
+                 for _ in range(num_procs)]
+
+    for p in processes:
+        p.daemon = True # Terminate if the parent dies.
+        p.start()
+
+    active_procs = 0
+    type_procs = defaultdict(lambda: 0)
+
+    def add_task(task_type, args):
+        in_queue.put((task_type, args))
+        type_procs[task_type] += 1
+
+    try:
+        for num_followers in range(1, max_num_followers):
+            sim_opts = prepare_multiple_followers_sim_opts(num_followers=num_followers,
+                                                           opts=setup_opts)
+            in_queue.put(('Opt', (setup_opts.seed, sim_opts)))
+            active_procs += 1
+
+        type_procs['Opt'] = active_procs
+        while active_procs > 0:
+            r = out_queue.get()
+            active_procs -= 1
+            type_procs[r['type']] -= 1
+
+            if active_procs % 10 == 0:
+                logTime('active_procs = {}, procs = {}'
+                        .format(active_procs, list(type_procs.items())))
+
+            if r['type'] == 'Exception':
+                logging.error('Exception while handling: ', r)
+            else:
+                raw_results.append(r)
+                perf = extract_perf_fields(r)
+                perf['num_followers'] = len(r['sim_opts'].sink_ids)
+                results.append(perf)
+
+                if r['type'] == 'Opt':
+                    seed = r['seed']
+                    capacity = r['capacity']
+                    sim_opts = r['sim_opts']
+                    # world_events = r['world_events']
+
+                    add_task('Poisson', (seed, capacity, sim_opts))
+                    active_procs += 1
+
+                    # add_task('Oracle', (seed, capacity, world_events, sim_opts))
+                    # active_procs += 1
+
+                    add_task('kdd', (seed, capacity, num_segments, sim_opts, None))
+                    active_procs += 1
+
+        for p in range(num_procs):
+            in_queue.put(('Stop', None))
+
+    except:
+        # In case of exceptions, do not block the parent thread and just
+        # discard all data on the queues.
+        in_queue.cancel_join_thread()
+        out_queue.cancel_join_thread()
+        raise
+    finally:
+        logging.info('Cleaning up {} processes'.format(len(processes)))
+        for p in processes:
+            p.terminate()
+            p.join()
+
+    return Options(df=pd.DataFrame.from_records(results),
+                   raw_results=raw_results)
 
 
 ## Workers for real data
@@ -1401,7 +1522,7 @@ def run_real_queue(N, num_segments, files_user_ids, min_user_capacity=2, num_pro
     if raw_results is None:
         raw_results = []
     elif len(raw_results) != 0:
-        print('raw_results passed are not empty, want to continue [y/n]?')
+        logging.info('raw_results passed are not empty, want to continue [y/n]?')
         ans = input('Continue [Y/n]?')
         if ans[0] != 'Y':
             return None
@@ -1480,7 +1601,7 @@ def run_real_queue(N, num_segments, files_user_ids, min_user_capacity=2, num_pro
                         .format(active_procs, list(type_procs.items())))
 
             if r['type'] == 'Exception':
-                print('Exception while handling: ', r)
+                logging.error('Exception while handling: ', r)
             else:
                 raw_results.append(r)
                 results.append(extract_real_perf_fields(r))
@@ -1520,13 +1641,13 @@ def run_real_queue(N, num_segments, files_user_ids, min_user_capacity=2, num_pro
         out_queue.cancel_join_thread()
         raise
     finally:
-        print('Cleaning up {} processes'.format(len(processes)))
+        logging.info('Cleaning up {} processes'.format(len(processes)))
         for p in processes:
             p.terminate()
             p.join()
 
     return Options(df=pd.DataFrame.from_records(results),
-                   raw_results = raw_results,
+                   raw_results=raw_results,
                    capacities=capacities)
 
 
