@@ -1183,7 +1183,7 @@ def run_multiple_followers(num_followers_list, num_segments, setup_opts, repetit
     total_procs = 0
 
     try:
-        for num_followers in num_followers_list:
+        for num_followers in sorted(num_followers_list, reverse=True):
             sim_opts = prepare_multiple_followers_sim_opts(num_followers=num_followers,
                                                            opts=setup_opts)
             for n in range(repetitions):
