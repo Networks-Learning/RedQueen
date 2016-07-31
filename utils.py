@@ -1190,6 +1190,12 @@ def run_multiple_followers(num_followers_list, num_segments, setup_opts, repetit
                 in_queue.put(('Opt', (setup_opts.seed * (n + 1) + 13, sim_opts, num_segments)))
                 active_procs += 1
 
+        output_period = 1
+        while output_period * 10 < active_procs:
+            output_period *= 10
+
+        logging.info('Reporting will be done every {} runs.'.format(output_period))
+
         type_procs['Opt'] = active_procs
         while active_procs > 0:
             r = out_queue.get()
@@ -1197,7 +1203,7 @@ def run_multiple_followers(num_followers_list, num_segments, setup_opts, repetit
             type_procs[r['type']] -= 1
             total_procs += 1
 
-            if total_procs % 10 == 0:
+            if total_procs % output_period == 0:
                 logTime('active/total = {}/{}, procs = {}'
                         .format(active_procs, total_procs, list(type_procs.items())))
 
