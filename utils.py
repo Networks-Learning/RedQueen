@@ -553,7 +553,12 @@ def add_perf(op, df, sim_opts):
 
 
 def worker_opt(params):
-    seed, sim_opts, queue = params
+    try:
+        seed, sim_opts, num_segments, queue = params
+    except ValueError:
+        seed, sim_opts, queue = params
+        num_segments = 10
+
     sim_mgr = sim_opts.create_manager_with_opt(seed=seed)
     sim_mgr.run_dynamic()
     df = sim_mgr.state.get_dataframe()
@@ -562,17 +567,39 @@ def worker_opt(params):
     # produced by the rest of the world.
     # capacity = u_int_opt(df=df, sim_opts=sim_opts)
 
+
+    # All tweets except by the optimal worker are wall tweets.
+    # this is valid only if other broadcasters do not react to the optimal
+    # broadcaster or do not deviate from their strategy (modulo variation due
+    # to different seeds of the random number generator).
+    wall_df = df[df.src_id != sim_opts.src_id]
+    T = sim_opts.end_time
+    seg_idx = (wall_df.t.values / T * num_segments).astype(int)
+    intensity_df = (
+        (wall_df.groupby(['sink_id', pd.Series(seg_idx, name='segment')]).size() / (T / num_segments))
+        .sort_index()
+        .reset_index(name='intensity')
+    )
+
+    # Order of walls is ambiguous here.
+    wall_intensities = (
+        intensity_df.pivot_table(values='intensity', index='sink_id', columns='segment')
+        .ix[sim_opts.sink_ids]  # Sort the data according to the sink_ids in sim_opts.
+        .values
+    )
+
     # Note: this works only if the optimal follower has exactly one follower. It is better to count the number
     # of distinct times that the optimal broadcaster tweeted.
     # capacity = (df.src_id == sim_opts.src_id).sum() * 1.0
     num_events = len(df.event_id[df.src_id == sim_opts.src_id].unique())
     capacity = num_events * 1.0
     op = {
-        'type'       : 'Opt',
-        'seed'       : seed,
-        'capacity'   : capacity,
-        'sim_opts'   : sim_opts,
-        's'          : sim_opts.s
+        'type'             : 'Opt',
+        'seed'             : seed,
+        'capacity'         : capacity,
+        'sim_opts'         : sim_opts,
+        's'                : sim_opts.s,
+        'wall_intensities' : wall_intensities
     }
 
     add_perf(op, df, sim_opts)
@@ -913,6 +940,34 @@ def run_inference(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low):
                    raw_results=raw_results,
                    capacities=capacities)
 
+def worker_combined(input_queue, output_queue):
+    while True:
+        broadcaster_type, broadcaster_args = input_queue.get()
+
+        if broadcaster_type == 'Stop':
+            break
+
+        try:
+            all_args = broadcaster_args + (output_queue,)
+            if broadcaster_type == 'Opt':
+                worker_opt(all_args)
+            elif broadcaster_type == 'Poisson':
+                worker_poisson(all_args)
+            elif broadcaster_type == 'Oracle':
+                worker_oracle(all_args)
+            elif broadcaster_type == 'kdd':
+                worker_kdd(all_args)
+            else:
+                raise RuntimeError('Unknown broadcaster type: {}'.format(broadcaster_type))
+        except Exception as e:
+            output_queue.put({
+                'type'             : 'Exception',
+                'error'            : e,
+                'broadcaster_type' : broadcaster_type,
+                'broadcaster_args' : broadcaster_args
+            })
+            raise
+
 
 @optioned(option_arg='opts')
 def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low, num_procs=None):
@@ -922,34 +977,6 @@ def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_
     if num_procs is None:
         num_procs = mp.cpu_count() - 1
 
-    def worker(input_queue, output_queue):
-        while True:
-            broadcaster_type, broadcaster_args = input_queue.get()
-
-            if broadcaster_type == 'Stop':
-                break
-
-            try:
-                all_args = broadcaster_args + (output_queue,)
-                if broadcaster_type == 'Opt':
-                    worker_opt(all_args)
-                elif broadcaster_type == 'Poisson':
-                    worker_poisson(all_args)
-                elif broadcaster_type == 'Oracle':
-                    worker_oracle(all_args)
-                elif broadcaster_type == 'kdd':
-                    worker_kdd(all_args)
-                else:
-                    raise RuntimeError('Unknown broadcaster type: {}'.format(broadcaster_type))
-            except Exception as e:
-                output_queue.put({
-                    'type'             : 'Exception',
-                    'error'            : e,
-                    'broadcaster_type' : broadcaster_type,
-                    'broadcaster_args' : broadcaster_args
-                })
-                raise
-
     in_queue = mp.Queue()
     out_queue = mp.Queue()
     results = []
@@ -957,7 +984,7 @@ def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_
     capacities = {}
 
     # Start consumers
-    processes = [mp.Process(target=worker, args=(in_queue, out_queue))
+    processes = [mp.Process(target=worker_combined, args=(in_queue, out_queue))
                  for _ in range(num_procs)]
 
     for p in processes:
@@ -1040,34 +1067,6 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
     if num_procs is None:
         num_procs = mp.cpu_count() - 1
 
-    def worker(input_queue, output_queue):
-        while True:
-            broadcaster_type, broadcaster_args = input_queue.get()
-
-            if broadcaster_type == 'Stop':
-                break
-
-            try:
-                all_args = broadcaster_args + (output_queue,)
-                if broadcaster_type == 'Opt':
-                    worker_opt(all_args)
-                elif broadcaster_type == 'Poisson':
-                    worker_poisson(all_args)
-                elif broadcaster_type == 'Oracle':
-                    worker_oracle(all_args)
-                elif broadcaster_type == 'kdd':
-                    worker_kdd(all_args)
-                else:
-                    raise RuntimeError('Unknown broadcaster type: {}'.format(broadcaster_type))
-            except Exception as e:
-                output_queue.put({
-                    'type'             : 'Exception',
-                    'error'            : e,
-                    'broadcaster_type' : broadcaster_type,
-                    'broadcaster_args' : broadcaster_args
-                })
-                raise
-
     in_queue = mp.Queue()
     out_queue = mp.Queue()
     results = []
@@ -1075,7 +1074,7 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
     capacities = {}
 
     # Start consumers
-    processes = [mp.Process(target=worker, args=(in_queue, out_queue))
+    processes = [mp.Process(target=worker_combined, args=(in_queue, out_queue))
                  for _ in range(num_procs)]
 
     for p in processes:
@@ -1154,39 +1153,11 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
 # TODO: Move prepare_multiple_followers_sim_opts into this file.
 
 @optioned(option_arg='opts')
-def run_multiple_followers(max_num_followers, num_segments, setup_opts, num_procs=None):
+def run_multiple_followers(num_followers_list, num_segments, setup_opts, repetitions, num_procs=None):
     """Run experiment with multiple followers."""
 
     if num_procs is None:
         num_procs = mp.cpu_count() - 1
-
-    def worker(input_queue, output_queue):
-        while True:
-            broadcaster_type, broadcaster_args = input_queue.get()
-
-            if broadcaster_type == 'Stop':
-                break
-
-            try:
-                all_args = broadcaster_args + (output_queue,)
-                if broadcaster_type == 'Opt':
-                    worker_opt(all_args)
-                elif broadcaster_type == 'Poisson':
-                    worker_poisson(all_args)
-                elif broadcaster_type == 'Oracle':
-                    worker_oracle(all_args)
-                elif broadcaster_type == 'kdd':
-                    worker_kdd(all_args)
-                else:
-                    raise RuntimeError('Unknown broadcaster type: {}'.format(broadcaster_type))
-            except Exception as e:
-                output_queue.put({
-                    'type'             : 'Exception',
-                    'error'            : e,
-                    'broadcaster_type' : broadcaster_type,
-                    'broadcaster_args' : broadcaster_args
-                })
-                raise
 
     in_queue = mp.Queue()
     out_queue = mp.Queue()
@@ -1194,7 +1165,104 @@ def run_multiple_followers(max_num_followers, num_segments, setup_opts, num_proc
     raw_results = []
 
     # Start consumers
-    processes = [mp.Process(target=worker, args=(in_queue, out_queue))
+    processes = [mp.Process(target=worker_combined, args=(in_queue, out_queue))
+                 for _ in range(num_procs)]
+
+    for p in processes:
+        p.daemon = True # Terminate if the parent dies.
+        p.start()
+
+    active_procs = 0
+    type_procs = defaultdict(lambda: 0)
+
+    def add_task(task_type, args):
+        in_queue.put((task_type, args))
+        type_procs[task_type] += 1
+
+    total_procs = 0
+
+    try:
+        for num_followers in num_followers_list:
+            sim_opts = prepare_multiple_followers_sim_opts(num_followers=num_followers,
+                                                           opts=setup_opts)
+            for n in range(repetitions):
+                in_queue.put(('Opt', (setup_opts.seed + n, sim_opts)))
+                active_procs += 1
+
+        type_procs['Opt'] = active_procs
+        while active_procs > 0:
+            r = out_queue.get()
+            active_procs -= 1
+            type_procs[r['type']] -= 1
+            total_procs += 1
+
+            if total_procs % 10 == 0:
+                logTime('active/total = {}/{}, procs = {}'
+                        .format(active_procs, total_procs, list(type_procs.items())))
+
+            if r['type'] == 'Exception':
+                logging.error('Exception while handling: ', r)
+            else:
+                raw_results.append(r)
+                perf = extract_perf_fields(r)
+                perf['num_followers'] = len(r['sim_opts'].sink_ids)
+                results.append(perf)
+
+                if r['type'] == 'Opt':
+                    seed = r['seed']
+                    capacity = r['capacity']
+                    sim_opts = r['sim_opts']
+                    # world_events = r['world_events']
+
+                    add_task('Poisson', (seed, capacity, sim_opts))
+                    active_procs += 1
+
+                    # add_task('Oracle', (seed, capacity, world_events, sim_opts))
+                    # active_procs += 1
+
+                    try:
+                        wall_intensities = r['wall_intensities']
+                    except KeyError:
+                        wall_intensities = None
+
+                    add_task('kdd', (seed, capacity, num_segments, sim_opts, wall_intensities))
+                    active_procs += 1
+
+        for p in range(num_procs):
+            in_queue.put(('Stop', None))
+
+    except:
+        # In case of exceptions, do not block the parent thread and just
+        # discard all data on the queues.
+        in_queue.cancel_join_thread()
+        out_queue.cancel_join_thread()
+        raise
+    finally:
+        logging.info('Cleaning up {} processes'.format(len(processes)))
+        for p in processes:
+            p.terminate()
+            p.join()
+
+    return Options(df=pd.DataFrame.from_records(results),
+                   raw_results=raw_results)
+
+
+# TODO: Mover prepare_overlapping_followees_sim_opts here.
+
+@optioned(option_arg='opts')
+def run_overlapping_followees(overlap_list, num_segments, setup_opts, repetitions, num_procs=None):
+    """Run experiment with multiple followers."""
+
+    if num_procs is None:
+        num_procs = mp.cpu_count() - 1
+
+    in_queue = mp.Queue()
+    out_queue = mp.Queue()
+    results = []
+    raw_results = []
+
+    # Start consumers
+    processes = [mp.Process(target=worker_combined, args=(in_queue, out_queue))
                  for _ in range(num_procs)]
 
     for p in processes:
@@ -1209,11 +1277,14 @@ def run_multiple_followers(max_num_followers, num_segments, setup_opts, num_proc
         type_procs[task_type] += 1
 
     try:
-        for num_followers in range(1, max_num_followers):
-            sim_opts = prepare_multiple_followers_sim_opts(num_followers=num_followers,
-                                                           opts=setup_opts)
-            in_queue.put(('Opt', (setup_opts.seed, sim_opts)))
-            active_procs += 1
+        for overlap in overlap_list:
+            sim_opts = prepare_overlapping_followees_sim_opts(
+                            num_overlap=overlap,
+                            opts=setup_opts)
+
+            for n in range(repetitions):
+                in_queue.put(('Opt', (setup_opts.seed + n, sim_opts)))
+                active_procs += 1
 
         type_procs['Opt'] = active_procs
         while active_procs > 0:
@@ -1245,7 +1316,12 @@ def run_multiple_followers(max_num_followers, num_segments, setup_opts, num_proc
                     # add_task('Oracle', (seed, capacity, world_events, sim_opts))
                     # active_procs += 1
 
-                    add_task('kdd', (seed, capacity, num_segments, sim_opts, None))
+                    try:
+                        wall_intensities = r['wall_intensities']
+                    except KeyError:
+                        wall_intensities = None
+
+                    add_task('kdd', (seed, capacity, num_segments, sim_opts, wall_intensities))
                     active_procs += 1
 
         for p in range(num_procs):
@@ -1265,7 +1341,6 @@ def run_multiple_followers(max_num_followers, num_segments, setup_opts, num_proc
 
     return Options(df=pd.DataFrame.from_records(results),
                    raw_results=raw_results)
-
 
 ## Workers for real data
 

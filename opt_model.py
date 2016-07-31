@@ -468,6 +468,7 @@ class Opt(Broadcaster):
                                         for x in sorted(self.sink_ids))
             else:
                 # Assuming that the self.q is otherwise a scalar number.
+                # Or a vector with the same number of elements as sink_ids
                 self.q_vec = np.ones(len(self.sink_ids), dtype=float) * self.q
 
         self.state.apply_event(event)
