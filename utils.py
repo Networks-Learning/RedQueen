@@ -556,6 +556,7 @@ def worker_opt(params):
     try:
         seed, sim_opts, num_segments, queue = params
     except ValueError:
+        logging.warn('Setting num_segments=10 for world-rate in worker_opt.')
         seed, sim_opts, queue = params
         num_segments = 10
 
@@ -1150,7 +1151,7 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
 
 # Experiment with multiple followers
 
-# TODO: Move prepare_multiple_followers_sim_opts into this file.
+# TODO: Move prepare_multiple_followers_sim_opts and related functions into this file.
 
 @optioned(option_arg='opts')
 def run_multiple_followers(num_followers_list, num_segments, setup_opts, repetitions, num_procs=None):
@@ -1186,7 +1187,7 @@ def run_multiple_followers(num_followers_list, num_segments, setup_opts, repetit
             sim_opts = prepare_multiple_followers_sim_opts(num_followers=num_followers,
                                                            opts=setup_opts)
             for n in range(repetitions):
-                in_queue.put(('Opt', (setup_opts.seed + n, sim_opts)))
+                in_queue.put(('Opt', (setup_opts.seed * (n + 1) + 13, sim_opts, num_segments)))
                 active_procs += 1
 
         type_procs['Opt'] = active_procs
