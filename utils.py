@@ -1135,8 +1135,8 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
                     add_task('Oracle', (seed, capacity, world_events, sim_opts))
                     active_procs += 1
 
-                    # add_task('kdd', (seed, capacity, num_segments, sim_opts, None))
-                    # active_procs += 1
+                    add_task('kdd', (seed, capacity, num_segments, sim_opts, r['wall_intensities']))
+                    active_procs += 1
 
         for p in range(num_procs):
             in_queue.put(('Stop', None))
