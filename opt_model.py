@@ -455,6 +455,7 @@ class Opt(Broadcaster):
         super(Opt, self).__init__(src_id, seed)
         self.q = q_vec
         self.s = s
+        self.sqrt_q_by_s = np.sqrt(self.q / self.s)
         self.old_rate = 0
         self.init = False
 
@@ -491,6 +492,7 @@ class Opt(Broadcaster):
             # or one at a time? Does that make a difference? Probably not. A
             # lot more work if the events are sent one by one per wall, though.
             new_rate = np.sqrt(self.q_vec / self.s).dot(r_t)
+            new_rate = self.sqrt_q_by_s.dot(r_t)
             diff_rate = new_rate - self.old_rate
             self.old_rate = new_rate
 
