@@ -1102,7 +1102,7 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
         for s in np.logspace(log_s_low, log_s_high, num=10):
             capacities[s] = []
             for seed in range(N):
-                in_queue.put(('Opt', (seed, sim_opts_gen(seed).update({ 's': s }))))
+                in_queue.put(('Opt', (seed, sim_opts_gen(seed).update({ 's': s }), num_segments)))
                 active_procs += 1
 
         type_procs['Opt'] = active_procs
