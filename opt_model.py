@@ -9,6 +9,7 @@ import sys
 import abc
 import bisect
 
+
 from utils import mb, is_sorted
 
 class Event:
@@ -503,6 +504,86 @@ class Opt(Broadcaster):
                 return cur_time + t_delta_new - self.last_self_event_time
 
 
+class OptPWSignificance(Broadcaster):
+    def __init__(self, src_id, seed, q_vec, time_period, s=1.0):
+        super(OptPWSignificance, self).__init__(src_id, seed)
+        # The assumption is that all changes happen at the same time across users.
+        self.q_pw = q_vec # size = |sink_ids| * |segments|
+        self.s = s
+        self.old_ranks = 0
+        self.time_period = time_period
+        self.init = False
+
+    def take_one_sample(self, event, pw_intensity):
+        """Takes one sample from the given pw_intensity, using the correct phase."""
+        phase = self.get_current_time(event) % self.time_period
+        # Rejection sampling with self.random_state
+        new_sample = 0
+        num_segments = pw_intensity.shape[0]
+        q_max = np.max(pw_intensity)
+        while True:
+            new_sample += self.random_state.exponential(scale=1.0 / q_max)
+            current_piece_index = int(num_segments * ((new_sample + phase) % self.time_period) / self.time_period)
+            if self.random_state.rand() < pw_intensity[current_piece_index] / q_max:
+                # print('Sample chosen: ', new_sample)
+                return new_sample
+
+    def get_next_interval(self, event):
+        if not self.init:
+            self.init = True
+            self.state.set_track_src_id(self.src_id)
+            self.old_ranks = np.asarray([0] * len(self.sink_ids))
+
+            q_pw = np.asarray(self.q_pw)
+            if len(self.q_pw.shape) == 1:
+                num_followers = len(self.sink_ids)
+                # Spread the same q_pw to all the followers Note that here the
+                # vector q_vec is interpreted differently from in Opt where the
+                # shape of q_vec has to be either 1 or equal to the number of
+                # followers. Here, the size is treated as the number of
+                # segments in the piecewise continuous significance of each
+                # follower.
+                #
+                # This will come back to bite us at some point.
+                q_pw = (q_pw
+                        .repeat(num_followers)
+                        .reshape((num_followers, -1), order='F'))
+            self.q_pw = q_pw
+            self.q_max = np.max(q_pw.sum(0))
+
+        self.state.apply_event(event)
+
+        if event is None:
+            # Tweet immediately if this is the first event.
+            self.old_ranks = np.asarray([0] * len(self.sink_ids))
+            return 0
+        elif event.src_id == self.src_id:
+            # No need to tweet if we are on top of all walls
+            self.old_rate = 0
+            self.old_ranks = np.asarray([0] * len(self.sink_ids))
+            return np.inf
+        else:
+            # check status of all walls and find position in it.
+            new_ranks = self.state.get_wall_rank(self.src_id, self.sink_ids,
+                                                 dict_form=False)
+
+            # If multiple walls are updated at the same time, should the
+            # drawing happen only once after all the updates have been applied
+            # or one at a time? Does that make a difference? Probably not. A
+            # lot more work if the events are sent one by one per wall, though.
+            rank_diff = new_ranks - self.old_ranks
+            pw_intensity = np.sqrt((self.q_pw * rank_diff[:,None]).sum(0) / self.s)
+
+            # Now to actually take a sample
+            t_delta_new = self.take_one_sample(event, pw_intensity)
+            cur_time = event.cur_time
+
+            self.old_ranks = new_ranks
+
+            if self.last_self_event_time + self.t_delta > cur_time + t_delta_new:
+                return cur_time + t_delta_new - self.last_self_event_time
+
+
 class PiecewiseConst(Broadcaster):
     def __init__(self, src_id, seed, change_times, rates):
         """Creates a broadcaster which tweets with the given rates."""
@@ -663,6 +744,8 @@ class SimOpts:
                 others.append(Poisson(**x[1]))
             elif x[0] == 'Poisson2':
                 others.append(Poisson2(**x[1]))
+            elif x[0] == 'OptPWSignificance':
+                others.append(OptPWSignificance(**x[1]))
             else:
                 raise ValueError('Unknown type of broadcaster: {}'.format(x[0]))
 
@@ -703,6 +786,40 @@ class SimOpts:
                                    rates=rates)
         return Manager(sim_opts=self,
                        sources=[piecewise] + self.create_other_sources())
+
+    def create_manager_with_significance(self, seed, time_period, significance=None, num_segments=None):
+        """Creates a manager to run the simulation with the given seed and with
+        the passed significance. If not passed, it will attempt to use the
+        q_vec as the significance vector. Failing that, if num_segments is
+        provided, it will extend q_vec to the required size and return the
+        manager."""
+
+        num_followers = len(self.sink_ids)
+
+        if significance is not None:
+            significance = np.asarray(significance).astype(float)
+        else:
+            q_vec = np.asarray(self.q_vec)
+            if q_vec.shape[0] == 1 and num_segments is not None:
+                q_vec = np.ones((num_followers, num_segments), dtype=float) * q_vec[:,None]
+
+            if num_segments is not None:
+                q_vec = np.ones((num_followers, num_segments)) * q_vec[:, None]
+
+            significance = q_vec
+
+        assert len(significance.shape) == 2, "Significance must be 2 dimensional."
+        assert significance.shape[1] == num_segments or num_segments is None, "Number of segments in significance do not match"
+        assert significance.shape[0] == len(self.sink_ids), "Number of sink_ids is not the same as size of significance."
+
+        opt_pw = OptPWSignificance(src_id=self.src_id,
+                                   seed=seed,
+                                   q_vec=significance,
+                                   time_period=time_period,
+                                   s=self.s)
+
+        return Manager(sim_opts=self,
+                       sources=[opt_pw] + self.create_other_sources())
 
     def create_manager_for_wall(self):
         """This generates the tweets of the rest of the other_sources only.
