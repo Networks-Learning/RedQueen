@@ -1167,7 +1167,7 @@ def run_multiple_followers(num_followers_list, num_segments, setup_opts, repetit
     """Run experiment with multiple followers."""
 
     if num_procs is None:
-        num_procs = mp.cpu_count() - 1
+        num_procs = mp.cpu_count()
 
     in_queue = mp.Queue()
     out_queue = mp.Queue()
@@ -1270,7 +1270,7 @@ def run_overlapping_followees(overlap_list, num_segments, setup_opts, repetition
     """Run experiment with multiple followers."""
 
     if num_procs is None:
-        num_procs = mp.cpu_count() - 1
+        num_procs = mp.cpu_count()
 
     in_queue = mp.Queue()
     out_queue = mp.Queue()
@@ -1292,25 +1292,35 @@ def run_overlapping_followees(overlap_list, num_segments, setup_opts, repetition
         in_queue.put((task_type, args))
         type_procs[task_type] += 1
 
+    total_procs = 0
+
     try:
         for overlap in overlap_list:
             sim_opts = prepare_overlapping_followees_sim_opts(
                             num_overlap=overlap,
+                            seed=setup_opts.seed + overlap + 1337,
                             opts=setup_opts)
 
             for n in range(repetitions):
-                in_queue.put(('Opt', (setup_opts.seed + n, sim_opts)))
+                in_queue.put(('Opt', (setup_opts.seed + n, sim_opts, num_segments)))
                 active_procs += 1
+
+        output_period = 1
+        while output_period * 10 < active_procs:
+            output_period *= 10
+
+        logging.info('Reporting will be done every {} runs.'.format(output_period))
 
         type_procs['Opt'] = active_procs
         while active_procs > 0:
             r = out_queue.get()
             active_procs -= 1
             type_procs[r['type']] -= 1
+            total_procs += 1
 
-            if active_procs % 10 == 0:
-                logTime('active_procs = {}, procs = {}'
-                        .format(active_procs, list(type_procs.items())))
+            if total_procs % output_period == 0:
+                logTime('active/total = {}/{}, procs = {}'
+                        .format(active_procs, total_procs, list(type_procs.items())))
 
             if r['type'] == 'Exception':
                 logging.error('Exception while handling: ', r)
@@ -1332,10 +1342,7 @@ def run_overlapping_followees(overlap_list, num_segments, setup_opts, repetition
                     # add_task('Oracle', (seed, capacity, world_events, sim_opts))
                     # active_procs += 1
 
-                    try:
-                        wall_intensities = r['wall_intensities']
-                    except KeyError:
-                        wall_intensities = None
+                    wall_intensities = r['wall_intensities']
 
                     add_task('kdd', (seed, capacity, num_segments, sim_opts, wall_intensities))
                     active_procs += 1
