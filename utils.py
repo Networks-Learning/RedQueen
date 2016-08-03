@@ -160,6 +160,15 @@ def calc_loss_opt(df, sim_opts):
     return pd.Series(data=q_t + s_t, index=r_t.index)
 
 
+def num_tweets_of(df, broadcaster_id=None, sim_opts=None):
+    """Returns number of tweets made by the given broadcaster in the data-frame."""
+    if sim_opts is not None:
+        broadcaster_id = mb(broadcaster_id, sim_opts.src_id)
+
+    assert broadcaster_id is not None, "Must either provide either broadcaster_id or sim_opts."
+    return 1.0 * df.event_id[df.src_id == broadcaster_id].nunique()
+
+
 ## Oracle
 
 def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
@@ -367,7 +376,7 @@ def latexify(fig_width=None, fig_height=None, columns=1, largeFonts=False):
 
     MAX_HEIGHT_INCHES = 8.0
     if fig_height > MAX_HEIGHT_INCHES:
-        logging.warn("WARNING: fig_height too large:" + fig_height +
+        logging.warning("WARNING: fig_height too large:" + fig_height +
               "so will reduce to" + MAX_HEIGHT_INCHES + "inches.")
         fig_height = MAX_HEIGHT_INCHES
 
@@ -556,7 +565,7 @@ def worker_opt(params):
     try:
         seed, sim_opts, num_segments, queue = params
     except ValueError:
-        logging.warn('Setting num_segments=10 for world-rate in worker_opt.')
+        logging.warning('Setting num_segments=10 for world-rate in worker_opt.')
         seed, sim_opts, queue = params
         num_segments = 10
 
@@ -744,7 +753,7 @@ def worker_kdd(params, verbose=False, Ks=None):
         op['kdd_opt_iters_' + str(k)] = iters
 
         if iters > 49900:
-            logging.warn('Setting {} took {} iters to converge.'.format(op, iters),
+            logging.warning('Setting {} took {} iters to converge.'.format(op, iters),
                   file=sys.stderr)
 
         piecewise_const_mgr = sim_opts.create_manager_with_piecewise_const(
@@ -1348,6 +1357,7 @@ def run_overlapping_followees(overlap_list, num_segments, setup_opts, repetition
 
     return Options(df=pd.DataFrame.from_records(results),
                    raw_results=raw_results)
+
 
 ## Workers for real data
 
