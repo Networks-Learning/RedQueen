@@ -331,7 +331,7 @@ class Broadcaster:
         ret_t_delta = self.last_self_event_time + self.t_delta - cur_time
 
         if ret_t_delta < 0:
-            logging.warn('returned t_delta = {} < 0, set to 0 instead.'.format(ret_t_delta), file=sys.stderr)
+            logging.warning('returned t_delta = {} < 0, set to 0 instead.'.format(ret_t_delta), file=sys.stderr)
             ret_t_delta = 0.0
 
         return ret_t_delta
