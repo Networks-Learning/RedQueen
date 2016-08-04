@@ -15,17 +15,26 @@ log = logTime if verbose else lambda *args, **kwargs: None
 def get_user_repository():
     """Generates the user-repository for a user."""
     try:
-        conn = db_connector.DbConnection(db_path='/dev/shm/db.sqlite3',
-                                         link_path='/dev/shm/links.sqlite3')
+        if os.path.isfile('/dev/shm/db.sqlite3') and os.path.isfile('/dev/shm/links.sqlite3'):
+            conn = db_connector.DbConnection(db_path='/dev/shm/db.sqlite3',
+                                             link_path='/dev/shm/links.sqlite3')
+        else:
+            raise IOError()
     except (OSError, IOError):
         logging.warning('The SQLite files not found on /dev/shm, looking for them on local drives.')
         try:
-            conn = db_connector.DbConnection(db_path='/local/moreka/db.sqlite3',
-                                             link_path='/local/moreka/links.sqlite3')
+            if os.path.isfile('/local/moreka/db.sqlite3') and os.path.isfile('/local/moreka/links.sqlite3'):
+                conn = db_connector.DbConnection(db_path='/local/moreka/db.sqlite3',
+                                                 link_path='/local/moreka/links.sqlite3')
+            else:
+                raise IOError()
         except (OSError, IOError):
             try:
-                 conn = db_connector.DbConnection(db_path='/local/utkarshu/db.sqlite3',
-                                                 link_path='/local/utkarshu/links.sqlite3')
+                if os.path.isfile('/local/utkarshu/db.sqlite3') and os.path.isfile('/local/utkarshu/links.sqlite3'):
+                     conn = db_connector.DbConnection(db_path='/local/utkarshu/db.sqlite3',
+                                                     link_path='/local/utkarshu/links.sqlite3')
+                else:
+                    raise IOError()
             except (OSError, IOError):
                 raise IOError('The twitter DBs were not found.')
 
