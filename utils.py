@@ -11,7 +11,7 @@ import sys
 import datetime as D
 import broadcast.opt.optimizer as Bopt
 
-from options import Options, optioned
+from decorated_options import Options, optioned
 
 ## Utilities
 
@@ -460,7 +460,53 @@ def calc_q_capacity_iter(sim_opts, s, seeds=None, parallel=True, dynamic=True):
     return capacities
 
 
-# There are so many ways this can go north. Particularly, if the user capacity
+@optioned('opts')
+def convert_to_bins(ts, start_time, num_segments, segment_length=None, time_period=None):
+        """Changes post-times to segment indexes."""
+        if time_period is None:
+            time_period = num_segments * segment_length
+
+        return (((np.asarray(ts) - start_time) % time_period / time_period) * num_segments).astype(int)
+
+
+def significance_q_int_worker(params):
+    sim_opts, seed, time_period = params
+    m = sim_opts.create_manager_with_significance(seed,
+                                                  significance=sim_opts.q_vec,
+                                                  time_period=time_period)
+    m.run_dynamic()
+    # return u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
+    # Opting for the simpler measurement of \int u(t) dt.
+    return num_tweets_of(m.state.get_dataframe(), sim_opts=sim_opts)
+
+
+@optioned('opts')
+def calc_significance_capacity_iter(sim_opts, s, time_period, seeds=None, parallel=True):
+    if seeds is None:
+        seeds = range(1000, 1025)
+
+    sim_opts = sim_opts.update({ 's': s })
+    capacities = np.zeros(len(seeds), dtype=float)
+    if not parallel:
+        for idx, seed in enumerate(seeds):
+            m = sim_opts.create_manager_with_significance(seed=seed,
+                                                          significance=sim_opts.q_vec,
+                                                          time_period=time_period)
+            m.run_dynamic()
+            capacities[idx] = u_int_opt(m.state.get_dataframe(),
+                                        sim_opts=sim_opts)
+    else:
+        num_workers = min(len(seeds), mp.cpu_count())
+        with mp.Pool(num_workers) as pool:
+            for (idx, capacity) in \
+                enumerate(pool.imap(significance_q_int_worker, [(sim_opts, x, time_period)
+                                                                 for x in seeds])):
+                capacities[idx] = capacity
+
+    return capacities
+
+
+# There are so many ways this can go south. Particularly, if the user capacity
 # is much higher than the average of the wall of other followees.
 def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynamic=True):
     # We know that on average, the ∫u(t)dt decreases with increasing 's'
@@ -495,7 +541,7 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
             s_lo = s
             capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
             if verbose:
-                logTime('s = {}, capcity = {}'.format(s, capacity))
+                logTime('s = {}, capacity = {}'.format(s, capacity))
             if terminate_cond(capacity):
                 return s
             if capacity >= capacity_cap:
@@ -507,7 +553,7 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
             s_hi = s
             capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
             if verbose:
-                logTime('s = {}, capcity = {}'.format(s, capacity))
+                logTime('s = {}, capacity = {}'.format(s, capacity))
             # TODO: will break if capacity_cap is too low ~ 1 event.
             if terminate_cond(capacity):
                 return s
@@ -521,6 +567,109 @@ def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynami
     while True:
         s = (s_hi + s_lo) / 2.0
         new_capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
+
+        if verbose:
+            logTime('new_capacity = {}, s = {}'.format(new_capacity, s))
+
+        if terminate_cond(new_capacity):
+            # Have converged
+            break
+        elif new_capacity > capacity_cap:
+            s_lo = s
+        else:
+            s_hi = s
+
+    # Step 3: Return
+    return s
+
+
+# There are so many ways this can go south. Particularly, if the user capacity
+# is much higher than the average of the wall of other followees.
+def sweep_s_with_significance(sim_opts,
+                              capacity_cap,
+                              time_period,
+                              tol=1e-2,
+                              parallel=True,
+                              verbose=False,
+                              s_init=None):
+    # We know that on average, the ∫u(t)dt decreases with increasing 's'
+
+    def terminate_cond(new_capacity):
+        return abs(new_capacity - capacity_cap) / capacity_cap < tol or \
+                np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1)
+
+    if s_init is None:
+        wall_mgr = sim_opts.create_manager_for_wall()
+        wall_mgr.run_dynamic()
+        r_t = rank_of_src_in_df(wall_mgr.state.get_dataframe(), -1)
+        s_init = (4 * (r_t.iloc[-1].mean() ** 2) * (sim_opts.end_time) ** 2) / (np.pi * np.pi * (capacity_cap + 1) ** 4)
+        if verbose:
+            logTime('s_init = {}'.format(s_init))
+
+    # Step 1: Find the upper/lower bound by exponential increase/decrease
+    init_cap = calc_significance_capacity_iter(
+        sim_opts=sim_opts,
+        s=s_init,
+        time_period=time_period,
+        parallel=parallel
+    ).mean()
+
+    if terminate_cond(init_cap):
+        return s_init
+
+    if verbose:
+        logTime('Initial capacity = {}, target capacity = {}, s_init = {}'
+                .format(init_cap, capacity_cap, s_init))
+
+    s = s_init
+    if init_cap < capacity_cap:
+        while True:
+            s_hi = s
+            s /= 2.0
+            s_lo = s
+            capacity = calc_significance_capacity_iter(
+                sim_opts=sim_opts,
+                s=s,
+                time_period=time_period,
+                parallel=parallel
+            ).mean()
+            if verbose:
+                logTime('s = {}, capacity = {}'.format(s, capacity))
+            if terminate_cond(capacity):
+                return s
+            if capacity >= capacity_cap:
+                break
+    else:
+        while True:
+            s_lo = s
+            s *= 2.0
+            s_hi = s
+            capacity = calc_significance_capacity_iter(
+                sim_opts=sim_opts,
+                s=s,
+                time_period=time_period,
+                parallel=parallel
+            ).mean()
+            if verbose:
+                logTime('s = {}, capacity = {}'.format(s, capacity))
+            # TODO: will break if capacity_cap is too low ~ 1 event.
+            if terminate_cond(capacity):
+                return s
+            if capacity <= capacity_cap:
+                break
+
+    if verbose:
+        logTime('s_hi = {}, s_lo = {}'.format(s_hi, s_lo))
+
+    # Step 2: Keep bisecting on 's' until we arrive at a close enough solution.
+    while True:
+        s = (s_hi + s_lo) / 2.0
+        new_capacity = calc_significance_capacity_iter(
+            sim_opts=sim_opts,
+            s=s,
+            time_period=time_period,
+            parallel=parallel
+        ).mean()
 
         if verbose:
             logTime('new_capacity = {}, s = {}'.format(new_capacity, s))
