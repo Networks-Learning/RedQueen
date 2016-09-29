@@ -214,7 +214,14 @@ def find_significance(user_id,
             follower_significance.append(follower_tweet_bins)
 
     raw_significance=np.asarray(follower_significance)
-    significance = raw_significance / raw_significance.sum(1)[:,None]
+    total_raw_significance = raw_significance.sum(1)
+    significance = raw_significance / total_raw_significance[:,None]
+    avg_for_others = np.nanmean(significance, axis=0)
+    # Fill in the NaNs with the average for the other followers, who have
+    # at least one follower.
+    significance[total_raw_significance == 0, :] = avg_for_others
+
+    # Now if there are any NaNs still left (i.e. if nobody tweeted anything)
     significance[np.isnan(significance)] = 1.0 / num_segments
 
     ret = Deco.Options(
