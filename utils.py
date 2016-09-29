@@ -615,6 +615,7 @@ def sweep_s_with_significance(sim_opts,
     ).mean()
 
     if terminate_cond(init_cap):
+        logTime('s_init meets the conditions.')
         return s_init
 
     if verbose:
