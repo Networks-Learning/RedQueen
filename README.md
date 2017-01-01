@@ -2,7 +2,7 @@
 
 This is a repository containing code for the paper:
 
-> RedQueen: An Online Algorithm for Smart Broadcasting in Social Networks
+> RedQueen: An Online Algorithm for Smart Broadcasting in Social Networks.
 > Ali Zarezade, MPI-SWS
 > Utkarsh Upadhyay, MPI-SWS
 > Hamid Rabiee, Sharif University of Technology
