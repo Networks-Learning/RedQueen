@@ -2,17 +2,17 @@
 
 This is a repository containing code for the paper:
 
-> RedQueen: An Online Algorithm for Smart Broadcasting in Social Networks.
-> Ali Zarezade, MPI-SWS
-> Utkarsh Upadhyay, MPI-SWS
-> Hamid Rabiee, Sharif University of Technology
+> RedQueen: An Online Algorithm for Smart Broadcasting in Social Networks.  
+> Ali Zarezade, MPI-SWS  
+> Utkarsh Upadhyay, MPI-SWS  
+> Hamid Rabiee, Sharif University of Technology  
 > Manuel Gomez Rodriguez, MPI for Software Systems
 
 ## Pre-requisites
 
 This code depends on the following packages:
 
- 1. `decorated_options`: Installation instructions are at [musically-ut/decorated_options](https://github.com/musically-ut/decorated_options)
+ 1. `decorated_options`: Installation instructions are at [musically-ut/decorated_options](https://github.com/musically-ut/decorated_options) or `pip install decorated_options`.
  2. `broadcast_ref` package (i.e. Karimi et.al.'s method, which is the current benchmark). This repository is currently private, but will be released before this code is made public.
 
 
@@ -35,3 +35,85 @@ This code depends on the following packages:
 
 The code execution is detailed in the included IPython notebooks.
 
+As an example, say if we have the following structure in our network of
+broadcasters (i.e. sources) and followers (i.e. sinks), with `Source 1` being
+the broadcaster we control:
+
+```
+   Source 1**      Source 2      Source 3
+    +   +             +                 +
+    |   |             |                 |
+    |   +----------------------------+  |
+    |                 |              |  |
+    |    +-------------------------  |  |
+    |    |            |           |  |  |
+   +v----v-+      +---v---+      +v--v--v+
+   |       |      |       |      |       |
+   |       |      |       |      |       |
+   |       |      |       |      |       |
+   |       |      |       |      |       |
+   |       |      |       |      |       |
+   |       |      |       |      |       |
+   +-------+      +-------+      +-------+
+    Sink 1          Sink 2         Sink 3
+```
+
+This will be represented in the following way:
+
+```
+simOpts = SimOpts(
+   src_id = 1,
+   end_time = 100, # When the simulations stop
+   q_vec = np.asarray([1.0, 1.0, 1.0]), # Weights of followers
+   s=1.0, # Control parameter for RedQueen
+   sink_ids = [1, 2, 3],
+   other_sources = [
+      ('Poisson2', { 'src_id': 2,
+                    'seed': 42,
+                    'rate': 10
+                  }),
+      ('Hawkes',  { 'src_id': 3,
+                    'seed': 43,
+                    'l_0': 10,
+                    'alpha': 1.0,
+                    'beta': 10.0
+                  })
+   ],
+   edge_list=[(1, 1), (1, 3), 
+              (2, 1), (2, 2), (2, 3),
+              (3, 3)]
+});
+```
+
+These `SimOpts` objects are immutable and can be used to create multiple simulations.
+
+Then to run the simulation, we need to create a simulation `Manager` by instantiating `Source 1`
+to be a kind of broadcaster, or by removing it altogether.
+
+```
+manager = simOpts.create_manager_with_opt(seed=101)
+# or 
+manager = simOpts.create_manager_for_wall()
+```
+
+Finally, run the simulation by calling `.run_dynamic`:
+
+```
+manager.run_dynamic()
+```
+
+Finally, the list of events can be extracted for further analysis:
+
+```
+df = manager.state.get_dataframe()
+```
+
+
+The file `utils.py` contains some functions which can assist in calculation of
+certain metrics:
+
+```
+import utils as U
+perf_1 = U.time_in_top_k(df=df, K=1, sim_opts=simOpts)
+perf_2 = U.average_rank(df=df, sim_opts=simOpts)
+```
