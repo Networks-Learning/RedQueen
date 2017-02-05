@@ -2,18 +2,14 @@
 
 This is a repository containing code for the paper:
 
-> RedQueen: An Online Algorithm for Smart Broadcasting in Social Networks.  
-> Ali Zarezade, MPI-SWS  
-> Utkarsh Upadhyay, MPI-SWS  
-> Hamid Rabiee, Sharif University of Technology  
-> Manuel Gomez Rodriguez, MPI for Software Systems
+> A. Zarezade, U. Upadhyay, H. R. Raibee, M. Gomez-Rodriguez. RedQueen: An Online Algorithm for Smart Broadcasting in Social Networks. In Proceedings of the 10th ACM International Conference on Web Search and Data Mining (WSDM), 2017.
 
 ## Pre-requisites
 
 This code depends on the following packages:
 
  1. `decorated_options`: Installation instructions are at [musically-ut/decorated_options](https://github.com/musically-ut/decorated_options) or `pip install decorated_options`.
- 2. `broadcast_ref` package (i.e. Karimi et.al.'s method, which is the current benchmark). This repository is currently private, but will be released before this code is made public.
+ 2. `broadcast_ref` package (i.e. Karimi et.al.'s method, which is the used as a baseline). Follow the instructions at [Networks-Learning/broadcast_ref](https://github.com/Networks-Learning/broadcast_ref).
 
 
 ## Code structure
