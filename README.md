@@ -56,7 +56,7 @@ the broadcaster we control:
 
 This will be represented in the following way:
 
-```
+```python
 simOpts = SimOpts(
    src_id = 1,
    end_time = 100, # When the simulations stop
@@ -86,7 +86,7 @@ These `SimOpts` objects are immutable and can be used to create multiple simulat
 Then to run the simulation, we need to create a simulation `Manager` by instantiating `Source 1`
 to be a kind of broadcaster, or by removing it altogether.
 
-```
+```python
 manager = simOpts.create_manager_with_opt(seed=101)
 # or 
 manager = simOpts.create_manager_for_wall()
@@ -94,13 +94,13 @@ manager = simOpts.create_manager_for_wall()
 
 Finally, run the simulation by calling `.run_dynamic`:
 
-```
+```python
 manager.run_dynamic()
 ```
 
 Finally, the list of events can be extracted for further analysis:
 
-```
+```python
 df = manager.state.get_dataframe()
 ```
 
@@ -108,7 +108,7 @@ df = manager.state.get_dataframe()
 The file `utils.py` contains some functions which can assist in calculation of
 certain metrics:
 
-```
+```python
 import utils as U
 perf_1 = U.time_in_top_k(df=df, K=1, sim_opts=simOpts)
 perf_2 = U.average_rank(df=df, sim_opts=simOpts)
