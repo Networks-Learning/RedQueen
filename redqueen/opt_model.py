@@ -9,8 +9,7 @@ import sys
 import abc
 import bisect
 
-
-from utils import mb, is_sorted
+from .utils import mb, is_sorted
 
 class Event:
     def __init__(self, event_id, time_delta, cur_time,

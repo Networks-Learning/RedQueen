@@ -1,4 +1,4 @@
-from opt_model import SimOpts
+from .opt_model import SimOpts
 import broadcast.opt.optimizer as Bopt
 import sys
 from decorated_options import optioned, Options
@@ -7,7 +7,7 @@ from collections import defaultdict
 import logging
 import multiprocessing as mp
 import pandas as pd
-from utils import time_in_top_k, average_rank, int_r_2, logTime, find_opt_oracle
+from .utils import time_in_top_k, average_rank, int_r_2, logTime, find_opt_oracle
 
 ## Workers for metrics
 
