@@ -716,6 +716,22 @@ class RealData(Broadcaster):
 # demand.
 class SimOpts:
     """This class holds the options with methods which can return a manager for running the simulation."""
+
+    broadcasters = {
+        'Hawkes': Hawkes,
+        'RealData': RealData,
+        'Opt': Opt,
+        'PiecewiseConst': PiecewiseConst,
+        'Poisson': Poisson,
+        'Poisson2': Poisson2,
+        'OptPWSignificance': OptPWSignificance
+    }
+
+    @classmethod
+    def registerSource(cls, sourceName, sourceConstructor):
+        """Register another kind of broadcaster."""
+        cls.broadcasters[sourceName] = sourceConstructor
+
     def __init__(self, **kwargs):
         self.src_id        = kwargs['src_id']
         self.q_vec         = kwargs['q_vec']
@@ -731,20 +747,8 @@ class SimOpts:
         for x in self.other_sources:
             if callable(x[0]):
                 others.append(x[0](**x[1]))
-            elif x[0] == 'Hawkes':
-                others.append(Hawkes(**x[1]))
-            elif x[0] == 'RealData':
-                others.append(RealData(**x[1]))
-            elif x[0] == 'Opt':
-                others.append(Opt(**x[1]))
-            elif x[0] == 'PiecewiseConst':
-                others.append(PiecewiseConst(**x[1]))
-            elif x[0] == 'Poisson':
-                others.append(Poisson(**x[1]))
-            elif x[0] == 'Poisson2':
-                others.append(Poisson2(**x[1]))
-            elif x[0] == 'OptPWSignificance':
-                others.append(OptPWSignificance(**x[1]))
+            elif x[0] in self.broadcasters:
+                others.append(self.broadcasters[x[0]](**x[1]))
             else:
                 raise ValueError('Unknown type of broadcaster: {}'.format(x[0]))
 
