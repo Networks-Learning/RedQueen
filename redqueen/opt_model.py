@@ -460,7 +460,7 @@ class Opt(Broadcaster):
         super(Opt, self).__init__(src_id, seed)
         self.q = q_vec
         self.s = s
-        self.sqrt_q_by_s = np.sqrt(self.q / self.s)
+        self.sqrt_q_by_s = None
         self.old_rate = 0
         self.init = False
 
@@ -470,12 +470,14 @@ class Opt(Broadcaster):
             self.state.set_track_src_id(self.src_id, self.sink_ids)
 
             if isinstance(self.q, dict):
-                self.q_vec = np.asarray(self.q[x]
-                                        for x in sorted(self.sink_ids))
+                self.q_vec = np.asarray([self.q[x]
+                                         for x in sorted(self.sink_ids)])
             else:
                 # Assuming that the self.q is otherwise a scalar number.
                 # Or a vector with the same number of elements as sink_ids
                 self.q_vec = np.ones(len(self.sink_ids), dtype=float) * self.q
+
+            self.sqrt_q_by_s = np.sqrt(self.q_vec / self.s)
 
         self.state.apply_event(event)
 
