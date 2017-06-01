@@ -28,20 +28,22 @@ class Event:
 
 class State:
     def __init__(self, cur_time, sink_ids):
-        self.num_sinks        = len(sink_ids)
-        self.time             = cur_time
-        self.sinks            = dict((x,[]) for x in sink_ids)
-        self.walls_updated    = False
-        self.events           = []
-        self.track_src_id     = None
-        self._tracked_ranks   = None
-        self._sorted_sink_ids = sorted(self.sinks.keys())
+        self.num_sinks         = len(sink_ids)
+        self.time              = cur_time
+        self.sinks             = dict((x,[]) for x in sink_ids)
+        self.walls_updated     = False
+        self.events            = []
+        self.track_src_id      = None
+        self._tracked_ranks    = None
+        self._tracked_sink_ids = None
+        self._sorted_sink_ids  = sorted(self.sinks.keys())
 
 
-    def set_track_src_id(self, src_id):
+    def set_track_src_id(self, src_id, follower_sink_ids):
         self.track_src_id = src_id
         # Assume that the rank person tweeted first.
-        self._tracked_ranks = dict((sink_id, 0) for sink_id in self.sinks.keys())
+        self._tracked_ranks = dict((sink_id, 0) for sink_id in follower_sink_ids)
+        self._tracked_sink_ids = follower_sink_ids
 
     def update_walls(self):
         """Adds the events to the walls. Needed for calculating the ranks."""
@@ -63,10 +65,11 @@ class State:
 
         if self.track_src_id is not None:
             if event.src_id == self.track_src_id:
-                self._tracked_ranks = dict((sink_id, 0) for sink_id in self.sinks.keys())
+                self._tracked_ranks = dict((sink_id, 0) for sink_id in self._tracked_sink_ids)
             else:
                 for sink_id in event.sink_ids:
-                    self._tracked_ranks[sink_id] += 1
+                    if sink_id in self._tracked_sink_ids:
+                        self._tracked_ranks[sink_id] += 1
 
         if force_wall_update:
             self.walls_updated = True
@@ -112,7 +115,9 @@ class State:
         if dict_form:
             return rank
         else:
-            return np.asarray([rank[sink_id] for sink_id in self._sorted_sink_ids])
+            return np.asarray([rank[sink_id]
+                               for sink_id in self._sorted_sink_ids
+                               if sink_id in follower_ids])
 
 
 class Manager:
@@ -462,7 +467,7 @@ class Opt(Broadcaster):
     def get_next_interval(self, event):
         if not self.init:
             self.init = True
-            self.state.set_track_src_id(self.src_id)
+            self.state.set_track_src_id(self.src_id, self.sink_ids)
 
             if isinstance(self.q, dict):
                 self.q_vec = np.asarray(self.q[x]
@@ -530,7 +535,7 @@ class OptPWSignificance(Broadcaster):
     def get_next_interval(self, event):
         if not self.init:
             self.init = True
-            self.state.set_track_src_id(self.src_id)
+            self.state.set_track_src_id(self.src_id, self.sink_ids)
             self.old_ranks = np.asarray([0] * len(self.sink_ids))
 
             q_pw = np.asarray(self.q_pw)

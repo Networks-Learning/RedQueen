@@ -60,7 +60,7 @@ This will be represented in the following way:
 simOpts = SimOpts(
    src_id = 1,
    end_time = 100, # When the simulations stop
-   q_vec = np.asarray([1.0, 1.0, 1.0]), # Weights of followers
+   q_vec = np.asarray([1.0, 1.0]), # Weights of followers
    s=1.0, # Control parameter for RedQueen
    sink_ids = [1, 2, 3],
    other_sources = [
@@ -78,7 +78,7 @@ simOpts = SimOpts(
    edge_list=[(1, 1), (1, 3), 
               (2, 1), (2, 2), (2, 3),
               (3, 3)]
-});
+);
 ```
 
 These `SimOpts` objects are immutable and can be used to create multiple simulations.
