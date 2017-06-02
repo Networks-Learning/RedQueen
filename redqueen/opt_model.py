@@ -460,7 +460,7 @@ class Opt(Broadcaster):
         super(Opt, self).__init__(src_id, seed)
         self.q = q_vec
         self.s = s
-        self.sqrt_q_by_s = None
+        self.sqrt_s_by_q = None
         self.old_rate = 0
         self.init = False
 
@@ -477,7 +477,7 @@ class Opt(Broadcaster):
                 # Or a vector with the same number of elements as sink_ids
                 self.q_vec = np.ones(len(self.sink_ids), dtype=float) * self.q
 
-            self.sqrt_q_by_s = np.sqrt(self.q_vec / self.s)
+            self.sqrt_s_by_q = np.sqrt(self.s / self.q_vec)
 
         self.state.apply_event(event)
 
@@ -498,8 +498,8 @@ class Opt(Broadcaster):
             # drawing happen only once after all the updates have been applied
             # or one at a time? Does that make a difference? Probably not. A
             # lot more work if the events are sent one by one per wall, though.
-            new_rate = np.sqrt(self.q_vec / self.s).dot(r_t)
-            new_rate = self.sqrt_q_by_s.dot(r_t)
+            new_rate = np.sqrt(self.s / self.q_vec ).dot(r_t)
+            new_rate = self.sqrt_s_by_q.dot(r_t)
             diff_rate = new_rate - self.old_rate
             self.old_rate = new_rate
 
@@ -578,7 +578,7 @@ class OptPWSignificance(Broadcaster):
             # or one at a time? Does that make a difference? Probably not. A
             # lot more work if the events are sent one by one per wall, though.
             rank_diff = new_ranks - self.old_ranks
-            pw_intensity = np.sqrt((self.q_pw * rank_diff[:,None]).sum(0) / self.s)
+            pw_intensity = np.sqrt(( self.s / self.q_pw * rank_diff[:,None]).sum(0))
 
             # Now to actually take a sample
             t_delta_new = self.take_one_sample(event, pw_intensity)
