@@ -1,5 +1,6 @@
 from .opt_model import SimOpts
-import broadcast.opt.optimizer as Bopt
+import warnings
+
 import sys
 from decorated_options import optioned, Options
 import numpy as np
@@ -8,6 +9,14 @@ import logging
 import multiprocessing as mp
 import pandas as pd
 from .utils import time_in_top_k, average_rank, int_r_2, logTime, find_opt_oracle
+
+try:
+    import broadcast.opt.optimizer as Bopt
+except:
+    warnings.warn('broadcast.opt.optimizer was NOT imported. '
+                  'Comparison against method of Karimi et. al. method will '
+                  'not be possible.')
+
 
 ## Workers for metrics
 
