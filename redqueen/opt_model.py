@@ -761,6 +761,14 @@ class SimOpts:
         return Manager(sim_opts=self,
                        sources=[opt] + self.create_other_sources())
 
+    def create_manager_with_broadcaster(self, broadcaster):
+        """Create a manager to run the simulation with the provided broadcaster
+        as one of the sources with the given seed."""
+        assert broadcaster.src_id == self.src_id, "Broadcaster has src_id = {}; expected = {}".format(broadcaster.src_id, self.src_id)
+
+        return Manager(sim_opts=self,
+                       sources=[broadcaster] + self.create_other_sources())
+
     def create_manager_with_poisson(self, seed, rate=None, capacity=None):
         """Create a manager to run the simulation with the given seed and the
         one source as Poisson with the provided capacity or rate.
