@@ -6,6 +6,7 @@ import logging
 import pandas as pd
 import itertools as I
 import sys
+import warnings
 import abc
 import bisect
 
@@ -89,6 +90,10 @@ class State:
         )
         return df
 
+    def get_num_events(self):
+        """Returns number of events which have happened."""
+        return len(self.events)
+
     def get_wall_rank(self, src_id, follower_ids, dict_form=True, force_recalc=False):
         """Return a dictionary or vectors of rank of the src_id on the wall of
         the followers. If the follower does not have any events from the given
@@ -157,6 +162,7 @@ class Manager:
         return self.state
 
     def run(self):
+        warnings.warn('Consider using `run_dynamic` instead of `run`.')
         return self.run_till()
 
     def run_till(self, end_time=None):
@@ -209,8 +215,7 @@ class Manager:
         # Step 7: Stop
         return self
 
-
-    def run_dynamic(self):
+    def run_dynamic(self, max_events=float('inf')):
         end_time = self.end_time
 
         # Step 1: Inform the sources of the sinks associated with them.
@@ -237,7 +242,7 @@ class Manager:
         static_source_times = sorted(static_source_times)
         static_idx = 0
 
-        while True:
+        while self.state.get_num_events() < max_events:
             # Step 3: Generate one t_delta from each source and form the
             # event which is going to happen next.
 
