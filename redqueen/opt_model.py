@@ -4,13 +4,13 @@ from __future__ import print_function
 import numpy as np
 import logging
 import pandas as pd
-import itertools as I
-import sys
+import itertools
 import warnings
 import abc
 import bisect
 
 from .utils import mb, is_sorted
+
 
 class Event:
     def __init__(self, event_id, time_delta, cur_time,
@@ -31,13 +31,12 @@ class State:
     def __init__(self, cur_time, sink_ids):
         self.num_sinks        = len(sink_ids)
         self.time             = cur_time
-        self.sinks            = dict((x,[]) for x in sink_ids)
+        self.sinks            = dict((x, []) for x in sink_ids)
         self.walls_updated    = False
         self.events           = []
         self.track_src_id     = None
         self._tracked_ranks   = None
         self._sorted_sink_ids = sorted(self.sinks.keys())
-
 
     def set_track_src_id(self, src_id):
         self.track_src_id = src_id
@@ -51,7 +50,6 @@ class State:
         for ev in self.events:
             for sink_id in ev.sink_ids:
                 self.sinks[sink_id].append(ev)
-
 
     def apply_event(self, event, force_wall_update=False):
         """Apply the given event to the state."""
@@ -110,7 +108,7 @@ class State:
                 for ii in range(len(self.sinks[sink_id]) - 1, -1, -1):
                     if self.sinks[sink_id][ii].src_id == src_id:
                         rank[sink_id] = len(self.sinks[sink_id]) - ii - 1
-                        break # breaks the inner for loop
+                        break  # breaks the inner for loop
         else:
             rank = self._tracked_ranks
 
@@ -206,7 +204,7 @@ class Manager:
             last_event = Event(event_id, t_delta,
                                cur_time + t_delta, next_src_id,
                                [x[1] for x in self.edge_list
-                                     if x[0] == next_src_id])
+                                if x[0] == next_src_id])
             event_id += 1
             self.state.apply_event(last_event)
 
@@ -235,7 +233,7 @@ class Manager:
             else:
                 src.initialize()
                 static_source_times.extend(zip(src.get_all_times(),
-                                               I.repeat(src.src_id)))
+                                               itertools.repeat(src.src_id)))
 
         last_event = None
         event_id = 100
@@ -278,7 +276,7 @@ class Manager:
             last_event = Event(event_id, event_time - cur_time,
                                event_time, event_src,
                                [x[1] for x in self.edge_list
-                                     if x[0] == event_src])
+                                if x[0] == event_src])
             event_id += 1
             self.state.apply_event(last_event)
 
@@ -422,6 +420,7 @@ class Poisson(Broadcaster):
 #                                      for s in self.prev_excitations
 #                                      if s < t]))
 
+
 class Hawkes(Broadcaster):
     def __init__(self, src_id, seed, l_0=1.0, alpha=1.0, beta=10.0):
         super(Hawkes, self).__init__(src_id, seed)
@@ -512,7 +511,7 @@ class OptPWSignificance(Broadcaster):
     def __init__(self, src_id, seed, q_vec, time_period, s=1.0):
         super(OptPWSignificance, self).__init__(src_id, seed)
         # The assumption is that all changes happen at the same time across users.
-        self.q_pw = q_vec # size = |sink_ids| * |segments|
+        self.q_pw = q_vec  # size = |sink_ids| * |segments|
         self.s = s
         self.old_ranks = 0
         self.time_period = time_period
@@ -576,7 +575,7 @@ class OptPWSignificance(Broadcaster):
             # or one at a time? Does that make a difference? Probably not. A
             # lot more work if the events are sent one by one per wall, though.
             rank_diff = new_ranks - self.old_ranks
-            pw_intensity = np.sqrt((self.q_pw * rank_diff[:,None]).sum(0) / self.s)
+            pw_intensity = np.sqrt((self.q_pw * rank_diff[:, None]).sum(0) / self.s)
 
             # Now to actually take a sample
             t_delta_new = self.take_one_sample(event, pw_intensity)
@@ -654,7 +653,6 @@ class PiecewiseConst(Broadcaster):
                 return np.inf
 
 
-
 class RealData2(Broadcaster):
     def __init__(self, src_id, times):
         super(RealData2, self).__init__(src_id, 0)
@@ -666,13 +664,12 @@ class RealData2(Broadcaster):
 
     def init_state(self, start_time, all_sink_ids, follower_sink_ids, end_time):
         super(RealData2, self).init_state(start_time,
-                                         all_sink_ids,
-                                         follower_sink_ids,
-                                         end_time)
+                                          all_sink_ids,
+                                          follower_sink_ids,
+                                          end_time)
         self.start_idx = 0
         self.relevant_times = self.times[self.times >= start_time]
         self.t_diff = np.diff(np.concatenate([[start_time], self.relevant_times]))
-
 
 
 class RealData(Broadcaster):
@@ -817,7 +814,7 @@ class SimOpts:
         else:
             q_vec = np.asarray(self.q_vec)
             if q_vec.shape[0] == 1 and num_segments is not None:
-                q_vec = np.ones((num_followers, num_segments), dtype=float) * q_vec[:,None]
+                q_vec = np.ones((num_followers, num_segments), dtype=float) * q_vec[:, None]
 
             if num_segments is not None:
                 q_vec = np.ones((num_followers, num_segments)) * q_vec[:, None]
@@ -841,7 +838,7 @@ class SimOpts:
         """This generates the tweets of the rest of the other_sources only.
         Useful for heuristics or oracle."""
         edge_list = [x for x in self.edge_list if x[0] != self.src_id]
-        return Manager(sim_opts=self.update({ 'edge_list': edge_list }),
+        return Manager(sim_opts=self.update({'edge_list': edge_list}),
                        sources=self.create_other_sources())
 
     def create_manager_with_times(self, event_times):
