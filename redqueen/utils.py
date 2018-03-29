@@ -11,7 +11,8 @@ import datetime as D
 
 from decorated_options import optioned
 
-## Utilities
+# Utilities
+
 
 def mb(val, default):
     return val if val is not None else default
@@ -22,8 +23,8 @@ def logTime(chkpoint):
     sys.stdout.flush()
 
 
-def def_q_vec(num_followers):
-    """Returns the default q_vec for the given number of followers."""
+def def_s_vec(num_followers):
+    """Returns the default s for the given number of followers."""
     return np.ones(num_followers, dtype=float) / (num_followers ** 2)
 
 
@@ -32,7 +33,7 @@ def is_sorted(x, ascending=True):
     return np.all((np.diff(x) * (1.0 if ascending else -1.0) >= 0))
 
 
-## Metrics
+# Metrics
 
 def rank_of_src_in_df(df, src_id, fill=True, with_time=True):
     """Calculates the rank of the src_id at each time instant in the list of events."""
@@ -55,7 +56,7 @@ def rank_of_src_in_df(df, src_id, fill=True, with_time=True):
     return pivot_ranks.fillna(method='ffill') if fill else pivot_ranks
 
 
-def u_int_opt(df, src_id=None, end_time=None, q_vec=None, s=None,
+def u_int_opt(df, src_id=None, end_time=None, s=None, q=None,
               follower_ids=None, sim_opts=None):
     """Calculate the ∫u(t)dt for the given src_id assuming that the broadcaster
     was following the optimal strategy."""
@@ -63,8 +64,8 @@ def u_int_opt(df, src_id=None, end_time=None, q_vec=None, s=None,
     if sim_opts is not None:
         src_id       = mb(src_id, sim_opts.src_id)
         end_time     = mb(end_time, sim_opts.end_time)
-        q_vec        = mb(q_vec, sim_opts.q_vec)
         s            = mb(s, sim_opts.s)
+        q            = mb(q, sim_opts.q)
         follower_ids = mb(follower_ids, sim_opts.sink_ids)
 
     if follower_ids is None:
@@ -74,7 +75,7 @@ def u_int_opt(df, src_id=None, end_time=None, q_vec=None, s=None,
         # assert is_sorted(follower_ids)
 
     r_t      = rank_of_src_in_df(df, src_id)
-    u_values = r_t[follower_ids].values.dot(np.sqrt(s / q_vec))
+    u_values = r_t[follower_ids].values.dot(np.sqrt(s / q))
     u_dt     = np.diff(np.concatenate([r_t.index.values, [end_time]]))
 
     return np.sum(u_values * u_dt)
@@ -112,6 +113,7 @@ def average_rank(df, src_id=None, end_time=None, sim_opts=None, **kwargs):
 
     return np.sum(r_t * r_dt)
 
+
 def int_r_2(df, sim_opts):
     """Returns ∫r²(t)dt for the given source id."""
     r_t = rank_of_src_in_df(df, sim_opts.src_id).mean(1)
@@ -120,25 +122,25 @@ def int_r_2(df, sim_opts):
 
 
 def calc_loss_poisson(df, u_const, src_id=None, end_time=None,
-                      q_vec=None, s=None, follower_ids=None, sim_opts=None):
+                      q=None, s=None, follower_ids=None, sim_opts=None):
     """Calculate the loss for the given source assuming that it was Poisson
     with rate u_const."""
 
     if sim_opts is not None:
         src_id       = mb(src_id, sim_opts.src_id)
         end_time     = mb(end_time, sim_opts.end_time)
-        q_vec        = mb(q_vec, sim_opts.q_vec)
+        q            = mb(q, sim_opts.q)
         s            = mb(s, sim_opts.s)
         follower_ids = mb(follower_ids, sim_opts.sink_ids)
 
     assert is_sorted(follower_ids)
 
-    if q_vec is None:
-        q_vec = def_q_vec(len(follower_ids))
+    if s is None:
+        s = def_s_vec(len(follower_ids))
 
     r_t = rank_of_src_in_df(df, src_id)
-    q_t = 0.5 * np.square(r_t[follower_ids].values).dot(q_vec)
-    s_t = 0.5 * s * np.ones(r_t.shape[0], dtype=float) * (u_const ** 2)
+    s_t = 0.5 * np.square(r_t[follower_ids].values).dot(s)
+    q_t = 0.5 * q * np.ones(r_t.shape[0], dtype=float) * (u_const ** 2)
 
     return pd.Series(data=q_t + s_t, index=r_t.index)
 
@@ -148,12 +150,12 @@ def calc_loss_opt(df, sim_opts):
     optimal broadcaster."""
 
     follower_ids = sim_opts.sink_ids
-    q_vec        = sim_opts.q_vec
+    s            = sim_opts.s
     src_id       = sim_opts.src_id
 
     r_t = rank_of_src_in_df(df, src_id)
-    q_t = 0.5 * np.square(r_t[follower_ids].values).dot(q_vec)
-    s_t = q_t # For the optimal solution, the q_t is the same is s_t
+    s_t = 0.5 * np.square(r_t[follower_ids].values).dot(s)
+    q_t = s_t  # For the optimal solution, the q_t is the same is s_t
 
     return pd.Series(data=q_t + s_t, index=r_t.index)
 
@@ -167,7 +169,7 @@ def num_tweets_of(df, broadcaster_id=None, sim_opts=None):
     return 1.0 * df.event_id[df.src_id == broadcaster_id].nunique()
 
 
-## Oracle
+# Oracle
 
 def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
     """Returns the best places the oracle would have put events. Optionally, it
@@ -186,7 +188,7 @@ def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
 
     # TODO: Will need to update q_vec manually if we want to run the method
     # for a subset of the user's followers.
-    q_vec = sim_opts.q_vec
+    q = sim_opts.q
     s = sim_opts.s
 
     # assert is_sorted(df.t.values), "Dataframe is not sorted by time."
@@ -209,15 +211,15 @@ def oracle_ranking(df, sim_opts, omit_src_ids=None, follower_ids=None):
         # This can be made parallel and vectorized
         # Also, not the whole matrix needs to be filled in (reduce run-time by 50%)
         for r in range(min(k + 1, n)):
-            J[r, k] = min(0.5 * s + J[0, k + 1],
-                          0.5 * q_vec * w[k + 1] * ((r + 1) ** 2) + J[r + 1, k + 1])
+            J[r, k] = min(0.5 * q + J[0, k + 1],
+                          0.5 * s * w[k + 1] * ((r + 1) ** 2) + J[r + 1, k + 1])
 
     # We are implicitly assuming that the oracle starts with rank 0
     oracle_ranks = np.zeros(n + 1, dtype=int)
     u_star = np.zeros(n + 1, dtype=int)
     for k in range(n):
-        lhs = 0.5 * s + J[0, k + 1]
-        rhs = 0.5 * q_vec * w[k + 1] * ((oracle_ranks[k] + 1) ** 2) + J[oracle_ranks[k] + 1, k + 1]
+        lhs = 0.5 * q + J[0, k + 1]
+        rhs = 0.5 * s * w[k + 1] * ((oracle_ranks[k] + 1) ** 2) + J[oracle_ranks[k] + 1, k + 1]
         if lhs < rhs:
             u_star[k] = 1
             oracle_ranks[k + 1] = 0
@@ -250,39 +252,38 @@ def get_oracle_df(sim_opts, with_cost=False):
 
 def find_opt_oracle(target_events, sim_opts, max_events=None, tol=1e-2, verbose=False):
     """Sweep the 's' parameter and get the best run of the oracle."""
-    s_hi, s_init, s_lo = 1.0 * 2, 1.0, 1.0 / 2
+    q_hi, q_init, q_lo = 1.0 * 2, 1.0, 1.0 / 2
 
     def terminate_cond(opt_events):
         return np.abs(opt_events - target_events) / (target_events * 1.0) < tol or \
             (opt_events == np.ceil(target_events)) or \
             (opt_events == np.floor(target_events))
 
-    oracle_df, cost = get_oracle_df(sim_opts.update({ 's': s_init }),
+    oracle_df, cost = get_oracle_df(sim_opts.update({'q': q_init}),
                                     with_cost=True)
     num_events = oracle_df.events.sum()
 
     if terminate_cond(num_events):
         return {
-            's': s_init,
+            'q': q_init,
             'cost': cost,
             'oracle_df': oracle_df
         }
 
-
     if num_events > target_events:
         while True:
-            s_lo = s_init
-            s_init *= 2
-            s_hi = s_init
-            oracle_df, cost = get_oracle_df(sim_opts.update({ 's': s_init }),
+            q_lo = q_init
+            q_init *= 2
+            q_hi = q_init
+            oracle_df, cost = get_oracle_df(sim_opts.update({'q': q_init}),
                                             with_cost=True)
             num_events = oracle_df.events.sum()
             if verbose:
-                logTime('s_lo = {}, s_hi = {}, num_events = {} '
-                        .format(s_lo, s_hi, num_events))
+                logTime('q_lo = {}, q_hi = {}, num_events = {} '
+                        .format(q_lo, q_hi, num_events))
             if terminate_cond(num_events):
                 return {
-                    's': s_init,
+                    'q': q_init,
                     'cost': cost,
                     'df': oracle_df
                 }
@@ -290,18 +291,18 @@ def find_opt_oracle(target_events, sim_opts, max_events=None, tol=1e-2, verbose=
                 break
     elif num_events < target_events:
         while True:
-            s_hi = s_init
-            s_init /= 2
-            s_lo = s_init
-            oracle_df, cost = get_oracle_df(sim_opts.update({ 's': s_init }),
+            q_hi = q_init
+            q_init /= 2
+            q_lo = q_init
+            oracle_df, cost = get_oracle_df(sim_opts.update({'q': q_init}),
                                             with_cost=True)
             num_events = oracle_df.events.sum()
             if verbose:
-                logTime('s_lo = {}, s_hi = {}, num_events = {} '
-                        .format(s_lo, s_hi, num_events))
+                logTime('q_lo = {}, q_hi = {}, num_events = {} '
+                        .format(q_lo, q_hi, num_events))
             if terminate_cond(num_events):
                 return {
-                    's': s_init,
+                    'q': q_init,
                     'cost': cost,
                     'df': oracle_df
                 }
@@ -309,32 +310,32 @@ def find_opt_oracle(target_events, sim_opts, max_events=None, tol=1e-2, verbose=
                 break
 
     if verbose:
-        logTime('s_lo = {}, s_hi = {}'.format(s_lo, s_hi))
+        logTime('q_lo = {}, q_hi = {}'.format(q_lo, q_hi))
 
     while True:
-        s_try = (s_lo + s_hi) / 2.0
-        oracle_df, cost = get_oracle_df(sim_opts.update({ 's': s_try }),
+        q_try = (q_lo + q_hi) / 2.0
+        oracle_df, cost = get_oracle_df(sim_opts.update({'q': q_try}),
                                         with_cost=True)
         opt_events = oracle_df.events.sum()
 
         if verbose:
-            logTime('s_try = {}, events = {}, cost = {}'.format(s_try, opt_events, cost))
+            logTime('q_try = {}, events = {}, cost = {}'.format(q_try, opt_events, cost))
 
         if terminate_cond(opt_events):
             return {
-                's': s_try,
+                'q': q_try,
                 'cost': cost,
                 'df': oracle_df
             }
         elif opt_events < target_events:
-            s_hi = s_try
+            q_hi = q_try
         else:
-            s_lo = s_try
+            q_lo = q_try
 
 
 def find_opt_oracle_s(target_events, sim_opts, tol=1e-1, verbose=False):
     res = find_opt_oracle(target_events, sim_opts, tol, verbose)
-    return res['s']
+    return res['q']
 
 
 def find_opt_oracle_time_top_k(target_events, K, sim_opts, tol=1e-1, verbose=False):
@@ -344,9 +345,11 @@ def find_opt_oracle_time_top_k(target_events, K, sim_opts, tol=1e-1, verbose=Fal
     return np.sum(df.t_delta[df.ranks <= K - 1])
 
 
-## LaTeX
+# LaTeX
 
 SPINE_COLOR = 'grey'
+
+
 def latexify(fig_width=None, fig_height=None, columns=1, largeFonts=False):
     """Set up matplotlib's RC params for LaTeX plotting.
     Call this before plotting a figure.
@@ -363,38 +366,39 @@ def latexify(fig_width=None, fig_height=None, columns=1, largeFonts=False):
     # Width and max height in inches for IEEE journals taken from
     # computer.org/cms/Computer.org/Journal%20templates/transactions_art_guide.pdf
 
-    assert(columns in [1,2])
+    assert(columns in [1, 2])
 
     if fig_width is None:
-        fig_width = 3.39 if columns == 1 else 6.9 # width in inches
+        fig_width = 3.39 if columns == 1 else 6.9  # width in inches
 
     if fig_height is None:
-        golden_mean = (np.sqrt(5)-1.0)/2.0    # Aesthetic ratio
-        fig_height = fig_width*golden_mean # height in inches
+        golden_mean = (np.sqrt(5) - 1.0) / 2.0    # Aesthetic ratio
+        fig_height = fig_width * golden_mean  # height in inches
 
     MAX_HEIGHT_INCHES = 8.0
     if fig_height > MAX_HEIGHT_INCHES:
         logging.warning("WARNING: fig_height too large:" + fig_height +
-              "so will reduce to" + MAX_HEIGHT_INCHES + "inches.")
+                        "so will reduce to" + MAX_HEIGHT_INCHES + "inches.")
         fig_height = MAX_HEIGHT_INCHES
 
-    params = {'backend': 'ps',
-              'text.latex.preamble': ['\\usepackage{gensymb}'],
-              'axes.labelsize': 10 if largeFonts else 7, # fontsize for x and y labels (was 10)
-              'axes.titlesize': 10 if largeFonts else 7,
-              'font.size': 10 if largeFonts else 7, # was 10
-              'legend.fontsize': 10 if largeFonts else 7, # was 10
-              'xtick.labelsize': 10 if largeFonts else 7,
-              'ytick.labelsize': 10 if largeFonts else 7,
-              'text.usetex': True,
-              'figure.figsize': [fig_width,fig_height],
-              'font.family': 'serif',
-              'xtick.minor.size': 0.5,
-              'xtick.major.pad': 1.5,
-              'xtick.major.size': 1,
-              'ytick.minor.size': 0.5,
-              'ytick.major.pad': 1.5,
-              'ytick.major.size': 1
+    params = {
+        'backend': 'ps',
+        'text.latex.preamble': ['\\usepackage{gensymb}'],
+        'axes.labelsize': 10 if largeFonts else 7,  # fontsize for x and y labels (was 10)
+        'axes.titlesize': 10 if largeFonts else 7,
+        'font.size': 10 if largeFonts else 7,  # was 10
+        'legend.fontsize': 10 if largeFonts else 7,  # was 10
+        'xtick.labelsize': 10 if largeFonts else 7,
+        'ytick.labelsize': 10 if largeFonts else 7,
+        'text.usetex': True,
+        'figure.figsize': [fig_width, fig_height],
+        'font.family': 'serif',
+        'xtick.minor.size': 0.5,
+        'xtick.major.pad': 1.5,
+        'xtick.major.size': 1,
+        'ytick.minor.size': 0.5,
+        'ytick.major.pad': 1.5,
+        'ytick.major.size': 1
     }
 
     matplotlib.rcParams.update(params)
@@ -419,9 +423,9 @@ def format_axes(ax):
     return ax
 
 
-## Sweeping s
+# Sweeping q
 
-def q_int_worker(params):
+def s_int_worker(params):
     sim_opts, seed, dynamic = params
     m = sim_opts.create_manager_with_opt(seed)
     if dynamic:
@@ -431,11 +435,11 @@ def q_int_worker(params):
     return u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
 
 
-def calc_q_capacity_iter(sim_opts, s, seeds=None, parallel=True, dynamic=True):
+def calc_s_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True):
     if seeds is None:
         seeds = range(10)
 
-    sim_opts = sim_opts.update({ 's': s })
+    sim_opts = sim_opts.update({'q': q})
 
     capacities = np.zeros(len(seeds), dtype=float)
     if not parallel:
@@ -451,7 +455,7 @@ def calc_q_capacity_iter(sim_opts, s, seeds=None, parallel=True, dynamic=True):
         num_workers = min(len(seeds), mp.cpu_count())
         with mp.Pool(num_workers) as pool:
             for (idx, capacity) in \
-                enumerate(pool.imap(q_int_worker, [(sim_opts, x, dynamic)
+                enumerate(pool.imap(s_int_worker, [(sim_opts, x, dynamic)
                                                    for x in seeds])):
                 capacities[idx] = capacity
 
@@ -470,7 +474,7 @@ def convert_to_bins(ts, start_time, num_segments, segment_length=None, time_peri
 def significance_q_int_worker(params):
     sim_opts, seed, time_period = params
     m = sim_opts.create_manager_with_significance(seed,
-                                                  significance=sim_opts.q_vec,
+                                                  significance=sim_opts.s,
                                                   time_period=time_period)
     m.run_dynamic()
     # return u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
@@ -479,16 +483,16 @@ def significance_q_int_worker(params):
 
 
 @optioned('opts')
-def calc_significance_capacity_iter(sim_opts, s, time_period, seeds=None, parallel=True):
+def calc_significance_capacity_iter(sim_opts, q, time_period, seeds=None, parallel=True):
     if seeds is None:
         seeds = range(1000, 1025)
 
-    sim_opts = sim_opts.update({ 's': s })
+    sim_opts = sim_opts.update({'q': q})
     capacities = np.zeros(len(seeds), dtype=float)
     if not parallel:
         for idx, seed in enumerate(seeds):
             m = sim_opts.create_manager_with_significance(seed=seed,
-                                                          significance=sim_opts.q_vec,
+                                                          significance=sim_opts.s,
                                                           time_period=time_period)
             m.run_dynamic()
             capacities[idx] = u_int_opt(m.state.get_dataframe(),
@@ -506,180 +510,180 @@ def calc_significance_capacity_iter(sim_opts, s, time_period, seeds=None, parall
 
 # There are so many ways this can go south. Particularly, if the user capacity
 # is much higher than the average of the wall of other followees.
-def sweep_s(sim_opts, capacity_cap, tol=1e-2, verbose=False, s_init=None, dynamic=True):
-    # We know that on average, the ∫u(t)dt decreases with increasing 's'
+def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynamic=True):
+    # We know that on average, the ∫u(t)dt decreases with increasing 'q'
 
     def terminate_cond(new_capacity):
         return abs(new_capacity - capacity_cap) / capacity_cap < tol or \
-                np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1)
+            np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1)
 
-    if s_init is None:
+    if q_init is None:
         wall_mgr = sim_opts.create_manager_for_wall()
         wall_mgr.run_dynamic()
         r_t = rank_of_src_in_df(wall_mgr.state.get_dataframe(), -1)
-        s_init = (4 * (r_t.iloc[-1].mean() ** 2) * (sim_opts.end_time) ** 2) / (np.pi * np.pi * (capacity_cap + 1) ** 4)
+        q_init = (4 * (r_t.iloc[-1].mean() ** 2) * (sim_opts.end_time) ** 2) / (np.pi * np.pi * (capacity_cap + 1) ** 4)
         if verbose:
-            logTime('s_init = {}'.format(s_init))
+            logTime('q_init = {}'.format(q_init))
 
     # Step 1: Find the upper/lower bound by exponential increase/decrease
-    init_cap = calc_q_capacity_iter(sim_opts, s_init, dynamic=dynamic).mean()
+    init_cap = calc_s_capacity_iter(sim_opts, q_init, dynamic=dynamic).mean()
 
     if terminate_cond(init_cap):
-        return s_init
+        return q_init
 
     if verbose:
-        logTime('Initial capacity = {}, target capacity = {}, s_init = {}'
-                .format(init_cap, capacity_cap, s_init))
+        logTime('Initial capacity = {}, target capacity = {}, q_init = {}'
+                .format(init_cap, capacity_cap, q_init))
 
-    s = s_init
+    q = q_init
     if init_cap < capacity_cap:
         while True:
-            s_hi = s
-            s /= 2.0
-            s_lo = s
-            capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
+            q_hi = q
+            q /= 2.0
+            q_lo = q
+            capacity = calc_s_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
             if verbose:
-                logTime('s = {}, capacity = {}'.format(s, capacity))
+                logTime('q = {}, capacity = {}'.format(q, capacity))
             if terminate_cond(capacity):
-                return s
+                return q
             if capacity >= capacity_cap:
                 break
     else:
         while True:
-            s_lo = s
-            s *= 2.0
-            s_hi = s
-            capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
+            q_lo = q
+            q *= 2.0
+            q_hi = q
+            capacity = calc_s_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
             if verbose:
-                logTime('s = {}, capacity = {}'.format(s, capacity))
+                logTime('q = {}, capacity = {}'.format(q, capacity))
             # TODO: will break if capacity_cap is too low ~ 1 event.
             if terminate_cond(capacity):
-                return s
+                return q
             if capacity <= capacity_cap:
                 break
 
     if verbose:
-        logTime('s_hi = {}, s_lo = {}'.format(s_hi, s_lo))
+        logTime('q_hi = {}, q_lo = {}'.format(q_hi, q_lo))
 
     # Step 2: Keep bisecting on 's' until we arrive at a close enough solution.
     while True:
-        s = (s_hi + s_lo) / 2.0
-        new_capacity = calc_q_capacity_iter(sim_opts, s, dynamic=dynamic).mean()
+        q = (q_hi + q_lo) / 2.0
+        new_capacity = calc_s_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
 
         if verbose:
-            logTime('new_capacity = {}, s = {}'.format(new_capacity, s))
+            logTime('new_capacity = {}, q = {}'.format(new_capacity, q))
 
         if terminate_cond(new_capacity):
             # Have converged
             break
         elif new_capacity > capacity_cap:
-            s_lo = s
+            q_lo = q
         else:
-            s_hi = s
+            q_hi = q
 
     # Step 3: Return
-    return s
+    return q
 
 
 # There are so many ways this can go south. Particularly, if the user capacity
 # is much higher than the average of the wall of other followees.
-def sweep_s_with_significance(sim_opts,
+def sweep_q_with_significance(sim_opts,
                               capacity_cap,
                               time_period,
                               tol=1e-2,
                               parallel=True,
                               verbose=False,
-                              s_init=None):
-    # We know that on average, the ∫u(t)dt decreases with increasing 's'
+                              q_init=None):
+    # We know that on average, the ∫u(t)dt decreases with increasing 'q'
 
     def terminate_cond(new_capacity):
         return abs(new_capacity - capacity_cap) / capacity_cap < tol or \
-                np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1)
+            np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1)
 
-    if s_init is None:
+    if q_init is None:
         wall_mgr = sim_opts.create_manager_for_wall()
         wall_mgr.run_dynamic()
         r_t = rank_of_src_in_df(wall_mgr.state.get_dataframe(), -1)
-        s_init = (4 * (r_t.iloc[-1].mean() ** 2) * (sim_opts.end_time) ** 2) / (np.pi * np.pi * (capacity_cap + 1) ** 4)
+        q_init = (4 * (r_t.iloc[-1].mean() ** 2) * (sim_opts.end_time) ** 2) / (np.pi * np.pi * (capacity_cap + 1) ** 4)
         if verbose:
-            logTime('s_init = {}'.format(s_init))
+            logTime('q_init = {}'.format(q_init))
 
     # Step 1: Find the upper/lower bound by exponential increase/decrease
     init_cap = calc_significance_capacity_iter(
         sim_opts=sim_opts,
-        s=s_init,
+        q=q_init,
         time_period=time_period,
         parallel=parallel
     ).mean()
 
     if terminate_cond(init_cap):
-        logTime('s_init meets the conditions.')
-        return s_init
+        logTime('q_init meets the conditions.')
+        return q_init
 
     if verbose:
-        logTime('Initial capacity = {}, target capacity = {}, s_init = {}'
-                .format(init_cap, capacity_cap, s_init))
+        logTime('Initial capacity = {}, target capacity = {}, q_init = {}'
+                .format(init_cap, capacity_cap, q_init))
 
-    s = s_init
+    q = q_init
     if init_cap < capacity_cap:
         while True:
-            s_hi = s
-            s /= 2.0
-            s_lo = s
+            q_hi = q
+            q /= 2.0
+            q_lo = q
             capacity = calc_significance_capacity_iter(
                 sim_opts=sim_opts,
-                s=s,
+                q=q,
                 time_period=time_period,
                 parallel=parallel
             ).mean()
             if verbose:
-                logTime('s = {}, capacity = {}'.format(s, capacity))
+                logTime('q = {}, capacity = {}'.format(q, capacity))
             if terminate_cond(capacity):
-                return s
+                return q
             if capacity >= capacity_cap:
                 break
     else:
         while True:
-            s_lo = s
-            s *= 2.0
-            s_hi = s
+            q_lo = q
+            q *= 2.0
+            q_hi = q
             capacity = calc_significance_capacity_iter(
                 sim_opts=sim_opts,
-                s=s,
+                q=q,
                 time_period=time_period,
                 parallel=parallel
             ).mean()
             if verbose:
-                logTime('s = {}, capacity = {}'.format(s, capacity))
+                logTime('q = {}, capacity = {}'.format(q, capacity))
             # TODO: will break if capacity_cap is too low ~ 1 event.
             if terminate_cond(capacity):
-                return s
+                return q
             if capacity <= capacity_cap:
                 break
 
     if verbose:
-        logTime('s_hi = {}, s_lo = {}'.format(s_hi, s_lo))
+        logTime('q_hi = {}, q_lo = {}'.format(q_hi, q_lo))
 
     # Step 2: Keep bisecting on 's' until we arrive at a close enough solution.
     while True:
-        s = (s_hi + s_lo) / 2.0
+        q = (q_hi + q_lo) / 2.0
         new_capacity = calc_significance_capacity_iter(
             sim_opts=sim_opts,
-            s=s,
+            q=q,
             time_period=time_period,
             parallel=parallel
         ).mean()
 
         if verbose:
-            logTime('new_capacity = {}, s = {}'.format(new_capacity, s))
+            logTime('new_capacity = {}, q = {}'.format(new_capacity, q))
 
         if terminate_cond(new_capacity):
             # Have converged
             break
         elif new_capacity > capacity_cap:
-            s_lo = s
+            q_lo = q
         else:
-            s_hi = s
+            q_hi = q
 
     # Step 3: Return
-    return s
+    return q

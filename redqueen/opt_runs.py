@@ -1,5 +1,5 @@
-from .opt_model import SimOpts
 import warnings
+import pickle
 
 import sys
 from decorated_options import optioned, Options
@@ -8,7 +8,15 @@ from collections import defaultdict
 import logging
 import multiprocessing as mp
 import pandas as pd
-from .utils import time_in_top_k, average_rank, int_r_2, logTime, find_opt_oracle
+
+try:
+    from .utils import time_in_top_k, average_rank, int_r_2, logTime, find_opt_oracle, sweep_q
+    from .opt_model import SimOpts
+except:
+    # Ignore imports because they may have been imported directly using
+    # %run -i
+    pass
+
 
 try:
     import broadcast.opt.optimizer as Bopt
@@ -18,15 +26,14 @@ except:
                   'not be possible.')
 
 
-## Workers for metrics
-
+# Workers for metrics
 
 # Ks = [1, 5, 10]
 # Ks = [1, 5]
 Ks = [1]
-perf_opts = Options(oracle_eps=1e-10, # This is how much after the event that the Oracle tweets.
+perf_opts = Options(oracle_eps=1e-10,  # This is how much after the event that the Oracle tweets.
                     Ks=Ks,
-                    performance_fields=['seed', 's', 'type'] +
+                    performance_fields=['seed', 'q', 'type'] +
                                        ['top_' + str(k) for k in Ks] +
                                        ['avg_rank', 'r_2', 'num_events', 'world_events'])
 
@@ -36,7 +43,7 @@ def add_perf(op, df, sim_opts):
         op['top_' + str(k)] = time_in_top_k(df=df, K=k, sim_opts=sim_opts)
 
     op['avg_rank'] = average_rank(df, sim_opts=sim_opts)
-    op['r_2'] =  int_r_2(df, sim_opts=sim_opts)
+    op['r_2'] = int_r_2(df, sim_opts=sim_opts)
     op['world_events'] = len(df.event_id[df.src_id != sim_opts.src_id].unique())
     op['num_events'] = len(df.event_id[df.src_id == sim_opts.src_id].unique())
 
@@ -56,7 +63,6 @@ def worker_opt(params):
     # May end up with number of tweets higher than the number of tweets
     # produced by the rest of the world.
     # capacity = u_int_opt(df=df, sim_opts=sim_opts)
-
 
     # All tweets except by the optimal worker are wall tweets.
     # this is valid only if other broadcasters do not react to the optimal
@@ -88,7 +94,7 @@ def worker_opt(params):
         'seed'             : seed,
         'capacity'         : capacity,
         'sim_opts'         : sim_opts,
-        's'                : sim_opts.s,
+        'q'                : sim_opts.q,
         'wall_intensities' : wall_intensities
     }
 
@@ -109,7 +115,7 @@ def worker_poisson(params):
         'type': 'Poisson',
         'seed': seed,
         'sim_opts': sim_opts,
-        's': sim_opts.s
+        'q': sim_opts.q
     }
 
     add_perf(op, df, sim_opts)
@@ -136,11 +142,10 @@ def worker_oracle(params):
         'type'          : 'Oracle',
         'seed'          : seed,
         'sim_opts'      : sim_opts,
-        's'             : sim_opts.s,
+        'q'             : sim_opts.q,
         'r0_num_events' : np.sum(oracle_df.events == 1),
         'num_events'    : np.sum(df.src_id == sim_opts.src_id)
     }
-
 
     add_perf(op, df, sim_opts)
 
@@ -148,7 +153,6 @@ def worker_oracle(params):
         queue.put(op)
 
     return op
-
 
 
 def worker_kdd(params, verbose=False, Ks=None):
@@ -178,7 +182,7 @@ def worker_kdd(params, verbose=False, Ks=None):
         'type'     : 'kdd',
         'seed'     : seed,
         'sim_opts' : sim_opts,
-        's'        : sim_opts.s
+        'q'        : sim_opts.q
     }
 
     best_avg_rank, best_avg_k = np.inf, -1
@@ -195,6 +199,7 @@ def worker_kdd(params, verbose=False, Ks=None):
                                                  follower_conn_prob,
                                                  follower_weights,
                                                  k)
+
             def _util_grad(x):
                 return Bopt.utils.weighted_top_k_grad(x,
                                                       follower_wall_intensities,
@@ -206,14 +211,15 @@ def worker_kdd(params, verbose=False, Ks=None):
             # For k = 1, special case of gradient calculation
             def _util(x):
                 return Bopt.utils.weighted_top_one(x,
-                                                 follower_wall_intensities,
-                                                 follower_conn_prob,
-                                                 follower_weights)
+                                                   follower_wall_intensities,
+                                                   follower_conn_prob,
+                                                   follower_weights)
+
             def _util_grad(x):
                 return Bopt.utils.weighted_top_one_grad(x,
-                                                      follower_wall_intensities,
-                                                      follower_conn_prob,
-                                                      follower_weights)
+                                                        follower_wall_intensities,
+                                                        follower_conn_prob,
+                                                        follower_weights)
 
         # Initial guess is close to Poisson solution
         x0 = np.ones(num_segments) * capacity / num_segments
@@ -234,7 +240,7 @@ def worker_kdd(params, verbose=False, Ks=None):
 
         if iters > 49900:
             logging.warning('Setting {} took {} iters to converge.'.format(op, iters),
-                  file=sys.stderr)
+                            file=sys.stderr)
 
         piecewise_const_mgr = sim_opts.create_manager_with_piecewise_const(
             seed=seed,
@@ -252,7 +258,6 @@ def worker_kdd(params, verbose=False, Ks=None):
 
         op['avg_rank_' + str(k)] = avg_rank
         op['r_2_' + str(k)] = r_2
-
 
         if avg_rank < best_avg_rank:
             best_avg_rank = avg_rank
@@ -275,7 +280,6 @@ def worker_kdd(params, verbose=False, Ks=None):
     return op
 
 
-
 # This is an approach using the multiprocessing module without the Pool and using a queue to accumulate the results.
 # This will lead to a better utilization of the CPU resources (hopefully) because the previous method only allowed
 # parallization of the number of seeds.
@@ -284,6 +288,7 @@ dilation = 100.0
 simulation_opts = Options(world_rate=1000.0 / dilation, world_alpha=1.0, world_beta=10.0,
                           N=10, T=1.0 * dilation, num_segments=10,
                           log_s_low=-6 + np.log10(dilation), log_s_high=5 + np.log10(dilation))
+
 
 @optioned(option_arg='opts')
 def piecewise_sim_opt_factory(N, T, num_segments, world_rate, opts):
@@ -294,14 +299,15 @@ def piecewise_sim_opt_factory(N, T, num_segments, world_rate, opts):
     def sim_opts_gen(seed):
         return SimOpts.std_piecewise_const(world_rates=world_changing_rates,
                                            world_change_times=world_change_times,
-                                           world_seed=seed + 42).update({'end_time': T })
+                                           world_seed=seed + 42).update({'end_time': T})
 
     return opts.set_new(N=N, T=T, num_segments=num_segments, sim_opts_gen=sim_opts_gen)
+
 
 poisson_inf_opts = simulation_opts.set_new(
     sim_opts_gen=lambda seed: SimOpts.std_poisson(world_rate=simulation_opts.world_rate,
                                                   world_seed=seed + 42)
-                                     .update({ 'end_time': simulation_opts.T }))
+                                     .update({'end_time': simulation_opts.T}))
 
 piecewise_inf_opts = piecewise_sim_opt_factory(opts=simulation_opts)
 hawkes_inf_opts = simulation_opts.set_new(
@@ -309,7 +315,7 @@ hawkes_inf_opts = simulation_opts.set_new(
                                                  world_lambda_0=simulation_opts.world_rate,
                                                  world_alpha=simulation_opts.world_alpha,
                                                  world_beta=simulation_opts.world_beta)
-                                     .update({ 'end_time': simulation_opts.T }))
+                                     .update({'end_time': simulation_opts.T}))
 
 
 def extract_perf_fields(return_obj, exclude_fields=None, include_fields=None):
@@ -324,7 +330,9 @@ def extract_perf_fields(return_obj, exclude_fields=None, include_fields=None):
     return result_dict
 
 
-real_performance_fields = [x for x in perf_opts.performance_fields if x != 's'] + ['user_id']
+real_performance_fields = [x for x in perf_opts.performance_fields if x != 'q'] + ['user_id']
+
+
 def extract_real_perf_fields(return_obj, exclude_fields=None, include_fields=None):
     """Extracts the relevant fields from the return object and returns them in a new dict."""
     result_dict = {}
@@ -337,10 +345,9 @@ def extract_real_perf_fields(return_obj, exclude_fields=None, include_fields=Non
     return result_dict
 
 
-
 @optioned(option_arg='opts')
-def run_inference(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low):
-    """Run inference for the given sim_opts_gen by sweeping over 's' and
+def run_inference(N, T, num_segments, sim_opts_gen, log_q_high, log_q_low):
+    """Run inference for the given sim_opts_gen by sweeping over 'q' and
     running the simulation for different seeds."""
     processes = []
     queue = mp.Queue()
@@ -350,11 +357,11 @@ def run_inference(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low):
 
     try:
         active_processes = 0
-        for s in np.logspace(log_s_low, log_s_high, num=10):
-            capacities[s] = []
+        for q in np.logspace(log_q_low, log_q_high, num=10):
+            capacities[q] = []
             for seed in range(N):
                 active_processes += 1
-                sim_opts = sim_opts_gen(seed).update({ 's' : s })
+                sim_opts = sim_opts_gen(seed).update({'q' : q})
                 p = mp.Process(target=worker_opt,
                                args=((seed, sim_opts, queue),))
                 processes.append(p)
@@ -430,6 +437,7 @@ def run_inference(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low):
                    raw_results=raw_results,
                    capacities=capacities)
 
+
 def worker_combined(input_queue, output_queue):
     while True:
         broadcaster_type, broadcaster_args = input_queue.get()
@@ -460,8 +468,8 @@ def worker_combined(input_queue, output_queue):
 
 
 @optioned(option_arg='opts')
-def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low, num_procs=None):
-    """Run inference for the given sim_opts_gen by sweeping over 's' and
+def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_q_high, log_q_low, num_procs=None):
+    """Run inference for the given sim_opts_gen by sweeping over 'q' and
     running the simulation for different seeds."""
 
     if num_procs is None:
@@ -478,7 +486,7 @@ def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_
                  for _ in range(num_procs)]
 
     for p in processes:
-        p.daemon = True # Terminate if the parent dies.
+        p.daemon = True  # Terminate if the parent dies.
         p.start()
 
     active_procs = 0
@@ -489,10 +497,10 @@ def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_
         type_procs[task_type] += 1
 
     try:
-        for s in np.logspace(log_s_low, log_s_high, num=10):
-            capacities[s] = []
+        for q in np.logspace(log_q_low, log_q_high, num=10):
+            capacities[q] = []
             for seed in range(N):
-                in_queue.put(('Opt', (seed, sim_opts_gen(seed).update({ 's': s }))))
+                in_queue.put(('Opt', (seed, sim_opts_gen(seed).update({'q': q}))))
                 active_procs += 1
 
         type_procs['Opt'] = active_procs
@@ -514,10 +522,10 @@ def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_
                 if r['type'] == 'Opt':
                     seed = r['seed']
                     capacity = r['capacity']
-                    s = r['sim_opts'].s
+                    q = r['sim_opts'].q
                     sim_opts = r['sim_opts']
                     world_events = r['world_events']
-                    capacities[s].append((seed, capacity))
+                    capacities[q].append((seed, capacity))
 
                     # add_task('Poisson', (seed, capacity, sim_opts))
                     # active_procs += 1
@@ -544,14 +552,13 @@ def run_inference_queue_kdd(N, T, num_segments, sim_opts_gen, log_s_high, log_s_
             p.join()
 
     return Options(df=pd.DataFrame.from_records(results),
-                   raw_results = raw_results,
+                   raw_results=raw_results,
                    capacities=capacities)
 
 
-
 @optioned(option_arg='opts')
-def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low, num_procs=None):
-    """Run inference for the given sim_opts_gen by sweeping over 's' and
+def run_inference_queue(N, T, num_segments, sim_opts_gen, log_q_high, log_q_low, num_procs=None):
+    """Run inference for the given sim_opts_gen by sweeping over 'q' and
     running the simulation for different seeds."""
 
     if num_procs is None:
@@ -568,7 +575,7 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
                  for _ in range(num_procs)]
 
     for p in processes:
-        p.daemon = True # Terminate if the parent dies.
+        p.daemon = True  # Terminate if the parent dies.
         p.start()
 
     active_procs = 0
@@ -579,10 +586,10 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
         type_procs[task_type] += 1
 
     try:
-        for s in np.logspace(log_s_low, log_s_high, num=10):
-            capacities[s] = []
+        for q in np.logspace(log_q_low, log_q_high, num=10):
+            capacities[q] = []
             for seed in range(N):
-                in_queue.put(('Opt', (seed, sim_opts_gen(seed).update({ 's': s }), num_segments)))
+                in_queue.put(('Opt', (seed, sim_opts_gen(seed).update({'q': q}), num_segments)))
                 active_procs += 1
 
         type_procs['Opt'] = active_procs
@@ -604,10 +611,10 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
                 if r['type'] == 'Opt':
                     seed = r['seed']
                     capacity = r['capacity']
-                    s = r['sim_opts'].s
+                    q = r['sim_opts'].q
                     sim_opts = r['sim_opts']
                     world_events = r['world_events']
-                    capacities[s].append((seed, capacity))
+                    capacities[q].append((seed, capacity))
 
                     add_task('Poisson', (seed, capacity, sim_opts))
                     active_procs += 1
@@ -634,7 +641,7 @@ def run_inference_queue(N, T, num_segments, sim_opts_gen, log_s_high, log_s_low,
             p.join()
 
     return Options(df=pd.DataFrame.from_records(results),
-                   raw_results = raw_results,
+                   raw_results=raw_results,
                    capacities=capacities)
 
 
@@ -649,6 +656,7 @@ def make_piecewise_const(num_segments):
 
 mk_edge_list_opts = Options(num_followers=100, num_broadcasters=100, degree=5, seed=42,
                                 follower_id_offset=1000, broadcaster_id_offset=5000)
+
 
 @optioned('opts')
 def make_edge_list(num_followers, num_broadcasters, degree,
@@ -689,8 +697,8 @@ def create_phased_pwconst_broadcaster(src_id, seed, rel_rates, avg_rate, end_tim
     # The area under the sin x curve from 0 till 2*pi is == 2.
     # Scaling the area such that the total area is equal to the avg_rate till the end_time
     shifted_rates = np.asarray(rel_rates[phase_shift:] + rel_rates[:phase_shift])
-    actual_rates =  shifted_rates * (avg_rate * num_segments) / np.sum(shifted_rates)
-    return ('PiecewiseConst', { 'src_id': src_id, 'seed': seed, 'change_times': change_times, 'rates': actual_rates})
+    actual_rates = shifted_rates * (avg_rate * num_segments) / np.sum(shifted_rates)
+    return ('PiecewiseConst', {'src_id': src_id, 'seed': seed, 'change_times': change_times, 'rates': actual_rates})
 
 
 def trim_sim_opts(sim_opts):
@@ -702,15 +710,17 @@ def trim_sim_opts(sim_opts):
     new_broadcasters = [src for src in sim_opts.other_sources if src[1]['src_id'] in reachable_broadcaster_ids]
 
     return sim_opts.update({
-            'sink_ids': sorted(intended_followees),
-            'edge_list': new_edge_list,
-            'other_sources': new_broadcasters,
-            's': 1.0 * (num_followers ** 2)
-        })
+        'sink_ids': sorted(intended_followees),
+        'edge_list': new_edge_list,
+        'other_sources': new_broadcasters,
+        'q': 1.0 * (num_followers ** 2)
+    })
+
 
 multiple_follower_opts = Options(seed=42, world_alpha=1.0, world_beta=10.0, world_rate=100.0,
                                  kind='PiecewiseConst', num_other_broadcasters=1000,
                                  max_num_followers=500, follower_other_degree=1)
+
 
 @optioned('opts')
 def prepare_multiple_followers_sim_opts(num_followers, num_other_broadcasters, max_num_followers,
@@ -774,11 +784,11 @@ def prepare_multiple_followers_sim_opts(num_followers, num_other_broadcasters, m
     sim_opts = SimOpts(
         src_id=optimal_broadcaster_id,
         end_time=end_time,
-        q_vec=np.asarray([1.0] * num_followers),
+        s=np.asarray([1.0] * num_followers),
         sink_ids=follower_ids,
         other_sources=other_broadcasters,
         edge_list=fixed_social_network,
-        s=1.0 * (num_followers ** 2)
+        q=1.0 * (num_followers ** 2)
     )
 
     return trim_sim_opts(sim_opts)
@@ -937,11 +947,11 @@ def prepare_overlapping_followees_sim_opts(num_overlap, broadcasters_per_followe
     sim_opts = SimOpts(
         src_id=optimal_broadcaster_id,
         end_time=100.0,
-        q_vec=np.asarray([1.0] * len(follower_ids)),
+        s=np.asarray([1.0] * len(follower_ids)),
         sink_ids=follower_ids,
         other_sources=other_broadcasters,
         edge_list=edge_list,
-        s=1.0
+        q=1.0
     )
 
     return sim_opts
@@ -1098,8 +1108,8 @@ def real_worker_poisson(params):
 
 def real_worker_opt(params, verbose=False):
     user_id, seeds, num_user_events, sim_opts, queue = params
-    s_opt = sweep_s(sim_opts, capacity_cap=num_user_events, tol=0.05, dynamic=True, verbose=verbose)
-    opt_sim_opts = sim_opts.update({ 's' : s_opt })
+    q_opt = sweep_q(sim_opts, capacity_cap=num_user_events, tol=0.05, dynamic=True, verbose=verbose)
+    opt_sim_opts = sim_opts.update({'q' : q_opt})
 
     ops = []
     for seed in seeds:
@@ -1113,7 +1123,7 @@ def real_worker_opt(params, verbose=False):
         op = {
             'user_id'    : user_id,
             'seed'       : seed,
-            's_opt'      : s_opt,
+            'q_opt'      : q_opt,
             'capacity'   : capacity,
             'sim_opts'   : sim_opts,
             'num_events' : num_events,
@@ -1290,11 +1300,9 @@ def real_worker_kdd(params, verbose=False):
     return ops
 
 
-import pickle
-
 @optioned(option_arg='opts')
 def run_real_queue(N, num_segments, files_user_ids, min_user_capacity=2, num_procs=None, raw_results=None):
-    """Run inference for the given sim_opts_gen by sweeping over 's' and
+    """Run inference for the given sim_opts_gen by sweeping over 'q' and
     running the simulation for different seeds."""
 
     if num_procs is None:

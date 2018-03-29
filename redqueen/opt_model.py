@@ -9,7 +9,11 @@ import warnings
 import abc
 import bisect
 
-from .utils import mb, is_sorted
+try:
+    from .utils import mb, is_sorted
+except:
+    # May have been imported via explicit %run -i
+    pass
 
 
 class Event:
@@ -31,7 +35,7 @@ class State:
     def __init__(self, cur_time, sink_ids):
         self.num_sinks         = len(sink_ids)
         self.time              = cur_time
-        self.sinks             = dict((x,[]) for x in sink_ids)
+        self.sinks             = dict((x, []) for x in sink_ids)
         self.walls_updated     = False
         self.events            = []
         self.track_src_id      = None
@@ -460,9 +464,9 @@ class Hawkes(Broadcaster):
 
 
 class Opt(Broadcaster):
-    def __init__(self, src_id, seed, q_vec=1.0, s=1.0):
+    def __init__(self, src_id, seed, q=1.0, s=1.0):
         super(Opt, self).__init__(src_id, seed)
-        self.q = q_vec
+        self.q = q
         self.s = s
         self.sqrt_s_by_q = None
         self.old_rate = 0
@@ -473,15 +477,15 @@ class Opt(Broadcaster):
             self.init = True
             self.state.set_track_src_id(self.src_id, self.sink_ids)
 
-            if isinstance(self.q, dict):
-                self.q_vec = np.asarray([self.q[x]
+            if isinstance(self.s, dict):
+                self.s_vec = np.asarray([self.s[x]
                                          for x in sorted(self.sink_ids)])
             else:
                 # Assuming that the self.q is otherwise a scalar number.
                 # Or a vector with the same number of elements as sink_ids
-                self.q_vec = np.ones(len(self.sink_ids), dtype=float) * self.q
+                self.s_vec = np.ones(len(self.sink_ids), dtype=float) * self.s
 
-            self.sqrt_s_by_q = np.sqrt(self.s / self.q_vec)
+            self.sqrt_s_by_q = np.sqrt(self.s_vec / self.q)
 
         self.state.apply_event(event)
 
@@ -502,7 +506,6 @@ class Opt(Broadcaster):
             # drawing happen only once after all the updates have been applied
             # or one at a time? Does that make a difference? Probably not. A
             # lot more work if the events are sent one by one per wall, though.
-            new_rate = np.sqrt(self.s / self.q_vec ).dot(r_t)
             new_rate = self.sqrt_s_by_q.dot(r_t)
             diff_rate = new_rate - self.old_rate
             self.old_rate = new_rate
@@ -515,11 +518,11 @@ class Opt(Broadcaster):
 
 
 class OptPWSignificance(Broadcaster):
-    def __init__(self, src_id, seed, q_vec, time_period, s=1.0):
+    def __init__(self, src_id, seed, s_vec, time_period, q=1.0):
         super(OptPWSignificance, self).__init__(src_id, seed)
         # The assumption is that all changes happen at the same time across users.
-        self.q_pw = q_vec  # size = |sink_ids| * |segments|
-        self.s = s
+        self.s_pw = np.asarray(s_vec)  # size = |sink_ids| * |segments|
+        self.q = q
         self.old_ranks = 0
         self.time_period = time_period
         self.init = False
@@ -530,11 +533,11 @@ class OptPWSignificance(Broadcaster):
         # Rejection sampling with self.random_state
         new_sample = 0
         num_segments = pw_intensity.shape[0]
-        q_max = np.max(pw_intensity)
+        s_max = np.max(pw_intensity)
         while True:
-            new_sample += self.random_state.exponential(scale=1.0 / q_max)
+            new_sample += self.random_state.exponential(scale=1.0 / s_max)
             current_piece_index = int(num_segments * ((new_sample + phase) % self.time_period) / self.time_period)
-            if self.random_state.rand() < pw_intensity[current_piece_index] / q_max:
+            if self.random_state.rand() < pw_intensity[current_piece_index] / s_max:
                 # print('Sample chosen: ', new_sample)
                 return new_sample
 
@@ -544,22 +547,21 @@ class OptPWSignificance(Broadcaster):
             self.state.set_track_src_id(self.src_id, self.sink_ids)
             self.old_ranks = np.asarray([0] * len(self.sink_ids))
 
-            q_pw = np.asarray(self.q_pw)
-            if len(self.q_pw.shape) == 1:
+            if len(self.s_pw.shape) == 1:
                 num_followers = len(self.sink_ids)
-                # Spread the same q_pw to all the followers Note that here the
-                # vector q_vec is interpreted differently from in Opt where the
-                # shape of q_vec has to be either 1 or equal to the number of
-                # followers. Here, the size is treated as the number of
-                # segments in the piecewise continuous significance of each
-                # follower.
+                # Spread the same s_pw to all the followers
+                #
+                # Note that here the vector s is interpreted differently
+                # from in Opt where the shape of s has to be either 1 or
+                # equal to the number of followers. Here, the size is treated
+                # as the number of segments in the piecewise continuous
+                # significance of each follower.
                 #
                 # This will come back to bite us at some point.
-                q_pw = (q_pw
-                        .repeat(num_followers)
-                        .reshape((num_followers, -1), order='F'))
-            self.q_pw = q_pw
-            self.q_max = np.max(q_pw.sum(0))
+                self.s_pw = (self.s_pw
+                             .repeat(num_followers)
+                             .reshape((num_followers, -1), order='F'))
+            self.s_max = np.max(self.s_pw.sum(0))
 
         self.state.apply_event(event)
 
@@ -582,7 +584,7 @@ class OptPWSignificance(Broadcaster):
             # or one at a time? Does that make a difference? Probably not. A
             # lot more work if the events are sent one by one per wall, though.
             rank_diff = new_ranks - self.old_ranks
-            pw_intensity = np.sqrt(( self.s / self.q_pw * rank_diff[:,None]).sum(0))
+            pw_intensity = (np.sqrt(self.s_pw / self.q) * rank_diff[:, None]).sum(0)
 
             # Now to actually take a sample
             t_delta_new = self.take_one_sample(event, pw_intensity)
@@ -743,8 +745,8 @@ class SimOpts:
 
     def __init__(self, **kwargs):
         self.src_id        = kwargs['src_id']
-        self.q_vec         = kwargs['q_vec']
         self.s             = kwargs['s']
+        self.q             = kwargs['q']
         self.other_sources = kwargs['other_sources']
         self.sink_ids      = kwargs['sink_ids']
         self.edge_list     = kwargs['edge_list']
@@ -766,7 +768,7 @@ class SimOpts:
     def create_manager_with_opt(self, seed):
         """Create a manager to run the simulation with Optimal broadcaster as
         one of the sources with the given seed."""
-        opt = Opt(src_id=self.src_id, seed=seed, q_vec=self.q_vec, s=self.s)
+        opt = Opt(src_id=self.src_id, seed=seed, s=self.s, q=self.q)
         return Manager(sim_opts=self,
                        sources=[opt] + self.create_other_sources())
 
@@ -810,8 +812,8 @@ class SimOpts:
     def create_manager_with_significance(self, seed, time_period, significance=None, num_segments=None):
         """Creates a manager to run the simulation with the given seed and with
         the passed significance. If not passed, it will attempt to use the
-        q_vec as the significance vector. Failing that, if num_segments is
-        provided, it will extend q_vec to the required size and return the
+        s as the significance vector. Failing that, if num_segments is
+        provided, it will extend s to the required size and return the
         manager."""
 
         num_followers = len(self.sink_ids)
@@ -819,14 +821,16 @@ class SimOpts:
         if significance is not None:
             significance = np.asarray(significance).astype(float)
         else:
-            q_vec = np.asarray(self.q_vec)
-            if q_vec.shape[0] == 1 and num_segments is not None:
-                q_vec = np.ones((num_followers, num_segments), dtype=float) * q_vec[:, None]
+            # We are extending s_vec to significance across time-periods for
+            # corresponding followers here (in order the sinks appear.
+            s_vec = np.asarray(self.s)
+            if s_vec.shape[0] == 1 and num_segments is not None:
+                s_vec = np.ones((num_followers, num_segments), dtype=float) * s_vec[:, None]
 
             if num_segments is not None:
-                q_vec = np.ones((num_followers, num_segments)) * q_vec[:, None]
+                s_vec = np.ones((num_followers, num_segments)) * s_vec[:, None]
 
-            significance = q_vec
+            significance = s_vec
 
         assert len(significance.shape) == 2, "Significance must be 2 dimensional."
         assert significance.shape[1] == num_segments or num_segments is None, "Number of segments in significance do not match"
@@ -834,9 +838,9 @@ class SimOpts:
 
         opt_pw = OptPWSignificance(src_id=self.src_id,
                                    seed=seed,
-                                   q_vec=significance,
+                                   s_vec=significance,
                                    time_period=time_period,
-                                   s=self.s)
+                                   q=self.q)
 
         return Manager(sim_opts=self,
                        sources=[opt_pw] + self.create_other_sources())
@@ -859,7 +863,7 @@ class SimOpts:
         """Returns dictionary form of the options."""
         return {
             'src_id'        : self.src_id,
-            'q_vec'         : self.q_vec,
+            'q'             : self.q,
             's'             : self.s,
             'other_sources' : self.other_sources,
             'sink_ids'      : self.sink_ids,
@@ -882,8 +886,8 @@ class SimOpts:
                                         'rate': world_rate})],
                        end_time=1.0,
                        sink_ids=[1001],
-                       q_vec=np.asarray([1.0]),
-                       s=1.0,
+                       s=np.asarray([1.0]),
+                       q=1.0,
                        edge_list=[(1, 1001), (2, 1001)])
 
     @staticmethod
@@ -900,8 +904,8 @@ class SimOpts:
                                         'beta': world_beta})],
                        end_time=1.0,
                        sink_ids=[1001],
-                       q_vec=np.asarray([1.0]),
-                       s=1.0,
+                       s=np.asarray([1.0]),
+                       q=1.0,
                        edge_list=[(1, 1001), (2, 1001)])
 
     @staticmethod
@@ -915,28 +919,27 @@ class SimOpts:
                                         'rates': world_rates})],
                        end_time=1.0,
                        sink_ids=[1001],
-                       q_vec=np.asarray([1.0]),
-                       s=1.0,
+                       s=np.asarray([1.0]),
+                       q=1.0,
                        edge_list=[(1, 1001), (2, 1001)])
-
 
 
 def test_simOpts():
     init_opts = {
-            'src_id'        : 1,
-            'end_time'      : 100.0,
-            'q_vec'         : np.array([1,2]),
-            's'             : 1.0,
-            'other_sources' : [(Poisson, {'src_id': 2, 'seed': 1}),
-                               (Poisson, {'src_id': 3, 'seed': 1})],
-            'sink_ids'      : [1001, 1000],
-            'edge_list'     : [(1, 1001), (1, 1000), (2, 1000), (3, 1001)]
-        }
+        'src_id'        : 1,
+        'end_time'      : 100.0,
+        's'             : np.array([1, 2]),
+        'q'             : 1.0,
+        'other_sources' : [(Poisson, {'src_id': 2, 'seed': 1}),
+                           (Poisson, {'src_id': 3, 'seed': 1})],
+        'sink_ids'      : [1001, 1000],
+        'edge_list'     : [(1, 1001), (1, 1000), (2, 1000), (3, 1001)]
+    }
 
     s = SimOpts(**init_opts)
     assert s.get_dict() == init_opts
 
-    s2 = s.update({ 'src_id': 2 })
+    s2 = s.update({'src_id': 2})
     assert s2.src_id == 2
 
     assert s.create_other_sources()[0].src_id == 2
@@ -944,14 +947,14 @@ def test_simOpts():
     init_opts_2 = {
         'src_id'        : 1,
         'end_time'      : 100.0,
-        'q_vec'         : np.array([1,2]),
-        's'             : 1.0,
+        's'             : np.array([1, 2]),
+        'q'             : 1.0,
         'other_sources' : [('Poisson', {'src_id': 2, 'seed': 1, 'rate': 1000.0}),
                            ('Poisson2', {'src_id': 3, 'seed': 1, 'rate': 1000.0}),
                            ('Hawkes', {'src_id': 4, 'seed': 1, 'l_0': 1.0, 'alpha': 1.0, 'beta': 10.0}),
                            ('PiecewiseConst', {'src_id': 5, 'seed': 1, 'rates': [0.0, 0.5, 1.0], 'change_times': [0, 50, 75]}),
-                           ('Opt', {'src_id': 6, 'seed': 1, 'q_vec': np.array([1.0]), 's': 1.0}),
-                           ('RealData', {'src_id': 7, 'times': [0,50,75]})],
+                           ('Opt', {'src_id': 6, 'seed': 1, 's': np.array([1.0]), 'q': 1.0}),
+                           ('RealData', {'src_id': 7, 'times': [0, 50, 75]})],
         'sink_ids'      : [1001, 1000],
         'edge_list'     : [(1, 1001), (1, 1000), (2, 1000), (3, 1001), (4, 1000), (5, 1000), (6, 1000), (7, 1000)]
     }
