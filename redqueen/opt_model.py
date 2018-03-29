@@ -29,19 +29,21 @@ class Event:
 
 class State:
     def __init__(self, cur_time, sink_ids):
-        self.num_sinks        = len(sink_ids)
-        self.time             = cur_time
-        self.sinks            = dict((x, []) for x in sink_ids)
-        self.walls_updated    = False
-        self.events           = []
-        self.track_src_id     = None
-        self._tracked_ranks   = None
-        self._sorted_sink_ids = sorted(self.sinks.keys())
+        self.num_sinks         = len(sink_ids)
+        self.time              = cur_time
+        self.sinks             = dict((x,[]) for x in sink_ids)
+        self.walls_updated     = False
+        self.events            = []
+        self.track_src_id      = None
+        self._tracked_ranks    = None
+        self._tracked_sink_ids = None
+        self._sorted_sink_ids  = sorted(self.sinks.keys())
 
-    def set_track_src_id(self, src_id):
+    def set_track_src_id(self, src_id, follower_sink_ids):
         self.track_src_id = src_id
         # Assume that the rank person tweeted first.
-        self._tracked_ranks = dict((sink_id, 0) for sink_id in self.sinks.keys())
+        self._tracked_ranks = dict((sink_id, 0) for sink_id in follower_sink_ids)
+        self._tracked_sink_ids = follower_sink_ids
 
     def update_walls(self):
         """Adds the events to the walls. Needed for calculating the ranks."""
@@ -62,10 +64,11 @@ class State:
 
         if self.track_src_id is not None:
             if event.src_id == self.track_src_id:
-                self._tracked_ranks = dict((sink_id, 0) for sink_id in self.sinks.keys())
+                self._tracked_ranks = dict((sink_id, 0) for sink_id in self._tracked_sink_ids)
             else:
                 for sink_id in event.sink_ids:
-                    self._tracked_ranks[sink_id] += 1
+                    if sink_id in self._tracked_sink_ids:
+                        self._tracked_ranks[sink_id] += 1
 
         if force_wall_update:
             self.walls_updated = True
@@ -115,7 +118,9 @@ class State:
         if dict_form:
             return rank
         else:
-            return np.asarray([rank[sink_id] for sink_id in self._sorted_sink_ids])
+            return np.asarray([rank[sink_id]
+                               for sink_id in self._sorted_sink_ids
+                               if sink_id in follower_ids])
 
 
 class Manager:
@@ -459,22 +464,24 @@ class Opt(Broadcaster):
         super(Opt, self).__init__(src_id, seed)
         self.q = q_vec
         self.s = s
-        self.sqrt_q_by_s = np.sqrt(self.q / self.s)
+        self.sqrt_s_by_q = None
         self.old_rate = 0
         self.init = False
 
     def get_next_interval(self, event):
         if not self.init:
             self.init = True
-            self.state.set_track_src_id(self.src_id)
+            self.state.set_track_src_id(self.src_id, self.sink_ids)
 
             if isinstance(self.q, dict):
-                self.q_vec = np.asarray(self.q[x]
-                                        for x in sorted(self.sink_ids))
+                self.q_vec = np.asarray([self.q[x]
+                                         for x in sorted(self.sink_ids)])
             else:
                 # Assuming that the self.q is otherwise a scalar number.
                 # Or a vector with the same number of elements as sink_ids
                 self.q_vec = np.ones(len(self.sink_ids), dtype=float) * self.q
+
+            self.sqrt_s_by_q = np.sqrt(self.s / self.q_vec)
 
         self.state.apply_event(event)
 
@@ -495,8 +502,8 @@ class Opt(Broadcaster):
             # drawing happen only once after all the updates have been applied
             # or one at a time? Does that make a difference? Probably not. A
             # lot more work if the events are sent one by one per wall, though.
-            new_rate = np.sqrt(self.q_vec / self.s).dot(r_t)
-            new_rate = self.sqrt_q_by_s.dot(r_t)
+            new_rate = np.sqrt(self.s / self.q_vec ).dot(r_t)
+            new_rate = self.sqrt_s_by_q.dot(r_t)
             diff_rate = new_rate - self.old_rate
             self.old_rate = new_rate
 
@@ -534,7 +541,7 @@ class OptPWSignificance(Broadcaster):
     def get_next_interval(self, event):
         if not self.init:
             self.init = True
-            self.state.set_track_src_id(self.src_id)
+            self.state.set_track_src_id(self.src_id, self.sink_ids)
             self.old_ranks = np.asarray([0] * len(self.sink_ids))
 
             q_pw = np.asarray(self.q_pw)
@@ -575,7 +582,7 @@ class OptPWSignificance(Broadcaster):
             # or one at a time? Does that make a difference? Probably not. A
             # lot more work if the events are sent one by one per wall, though.
             rank_diff = new_ranks - self.old_ranks
-            pw_intensity = np.sqrt((self.q_pw * rank_diff[:, None]).sum(0) / self.s)
+            pw_intensity = np.sqrt(( self.s / self.q_pw * rank_diff[:,None]).sum(0))
 
             # Now to actually take a sample
             t_delta_new = self.take_one_sample(event, pw_intensity)
