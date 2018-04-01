@@ -60,8 +60,8 @@ This will be represented in the following way:
 simOpts = SimOpts(
    src_id = 1,
    end_time = 100, # When the simulations stop
-   q_vec = { 1: 1.0, 3: 1.0 }, # Weights of followers of source 1
-   s=1.0, # Control parameter for RedQueen
+   s = { 1: 1.0, 3: 1.0 }, # Weights of followers of source 1
+   q=1.0, # Control parameter for RedQueen
    sink_ids = [1, 2, 3],
    other_sources = [
       ('Poisson2', { 'src_id': 2,
