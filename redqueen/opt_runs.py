@@ -287,7 +287,7 @@ def worker_kdd(params, verbose=False, Ks=None):
 dilation = 100.0
 simulation_opts = Options(world_rate=1000.0 / dilation, world_alpha=1.0, world_beta=10.0,
                           N=10, T=1.0 * dilation, num_segments=10,
-                          log_s_low=-6 + np.log10(dilation), log_s_high=5 + np.log10(dilation))
+                          log_q_low=-6 + np.log10(dilation), log_q_high=5 + np.log10(dilation))
 
 
 @optioned(option_arg='opts')

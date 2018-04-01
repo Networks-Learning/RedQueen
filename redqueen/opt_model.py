@@ -145,6 +145,8 @@ class Manager:
         assert len(set(sink_ids)) == len(sink_ids), "Duplicates in sink_ids."
 
         if edge_list is None:
+            # If the edge_list is None, then assume that all sources are
+            # connected to all sinks.
             edge_list = []
             for src in sources:
                 src_id = src.src_id
@@ -765,6 +767,17 @@ class SimOpts:
 
         return others
 
+    def randomize_other_sources(self, using_seed):
+        """Returns a new sim_opts after randomizing the seeds of the other sources."""
+        other_sources = []
+        for idx, (x, y) in enumerate(self.other_sources):
+            assert 'seed' in y, 'Do not know how to randomize {}.'.format(x)
+            y_new = y.copy()
+            y_new['seed'] = using_seed + 99 * idx
+            other_sources.append((x, y_new))
+
+        return self.update({'other_sources': other_sources})
+
     def create_manager_with_opt(self, seed):
         """Create a manager to run the simulation with Optimal broadcaster as
         one of the sources with the given seed."""
@@ -871,7 +884,12 @@ class SimOpts:
             'end_time'      : self.end_time
         }
 
+    def copy(self):
+        """Create a copy of this SimOpts."""
+        return self.update({})
+
     def update(self, changes):
+        """Make the supplied changes and return a new SimOpts."""
         new_opts = self.get_dict()
         new_opts.update(changes)
         return SimOpts(**new_opts)

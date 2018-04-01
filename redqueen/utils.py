@@ -333,13 +333,13 @@ def find_opt_oracle(target_events, sim_opts, max_events=None, tol=1e-2, verbose=
             q_lo = q_try
 
 
-def find_opt_oracle_s(target_events, sim_opts, tol=1e-1, verbose=False):
+def find_opt_oracle_q(target_events, sim_opts, tol=1e-1, verbose=False):
     res = find_opt_oracle(target_events, sim_opts, tol, verbose)
     return res['q']
 
 
 def find_opt_oracle_time_top_k(target_events, K, sim_opts, tol=1e-1, verbose=False):
-    logTime('This method is incorrect.', file=sys.stderr)
+    logTime('This method is incorrect.')
     res = find_opt_oracle(target_events, sim_opts, tol, verbose)
     df = res['df']
     return np.sum(df.t_delta[df.ranks <= K - 1])
@@ -425,7 +425,7 @@ def format_axes(ax):
 
 # Sweeping q
 
-def s_int_worker(params):
+def q_int_worker(params):
     sim_opts, seed, dynamic = params
     m = sim_opts.create_manager_with_opt(seed)
     if dynamic:
@@ -435,7 +435,7 @@ def s_int_worker(params):
     return u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
 
 
-def calc_s_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True):
+def calc_q_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True):
     if seeds is None:
         seeds = range(10)
 
@@ -455,7 +455,7 @@ def calc_s_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True):
         num_workers = min(len(seeds), mp.cpu_count())
         with mp.Pool(num_workers) as pool:
             for (idx, capacity) in \
-                enumerate(pool.imap(s_int_worker, [(sim_opts, x, dynamic)
+                enumerate(pool.imap(q_int_worker, [(sim_opts, x, dynamic)
                                                    for x in seeds])):
                 capacities[idx] = capacity
 
@@ -526,7 +526,7 @@ def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynami
             logTime('q_init = {}'.format(q_init))
 
     # Step 1: Find the upper/lower bound by exponential increase/decrease
-    init_cap = calc_s_capacity_iter(sim_opts, q_init, dynamic=dynamic).mean()
+    init_cap = calc_q_capacity_iter(sim_opts, q_init, dynamic=dynamic).mean()
 
     if terminate_cond(init_cap):
         return q_init
@@ -541,7 +541,7 @@ def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynami
             q_hi = q
             q /= 2.0
             q_lo = q
-            capacity = calc_s_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
+            capacity = calc_q_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
             if verbose:
                 logTime('q = {}, capacity = {}'.format(q, capacity))
             if terminate_cond(capacity):
@@ -553,7 +553,7 @@ def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynami
             q_lo = q
             q *= 2.0
             q_hi = q
-            capacity = calc_s_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
+            capacity = calc_q_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
             if verbose:
                 logTime('q = {}, capacity = {}'.format(q, capacity))
             # TODO: will break if capacity_cap is too low ~ 1 event.
@@ -568,7 +568,7 @@ def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynami
     # Step 2: Keep bisecting on 's' until we arrive at a close enough solution.
     while True:
         q = (q_hi + q_lo) / 2.0
-        new_capacity = calc_s_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
+        new_capacity = calc_q_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
 
         if verbose:
             logTime('new_capacity = {}, q = {}'.format(new_capacity, q))
