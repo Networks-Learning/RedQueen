@@ -1,10 +1,12 @@
 # Reading real data
 
+import warnings
+
 try:
-    from opt_models import SimOpts
+    from .opt_model import SimOpts
 except:
     # May be in the current scope via %run -i
-    pass
+    warnings.warn('SimOpts not loaded via import.')
 
 import os
 import re
