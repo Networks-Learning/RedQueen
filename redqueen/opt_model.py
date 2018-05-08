@@ -13,6 +13,7 @@ try:
     from .utils import mb, is_sorted
 except:
     # May have been imported via explicit %run -i
+    warnings.warn('Unable to import is_sorted from utils.')
     pass
 
 
@@ -99,11 +100,14 @@ class State:
         """Returns number of events which have happened."""
         return len(self.events)
 
-    def get_wall_rank(self, src_id, follower_ids, dict_form=True, force_recalc=False):
+    def get_wall_rank(self, src_id, follower_ids, dict_form=True, force_recalc=False, assume_first=False):
         """Return a dictionary or vectors of rank of the src_id on the wall of
         the followers. If the follower does not have any events from the given
         source, the corresponding rank is `None`. The resulting vector will
         be formed after sorting the sink_ids.
+
+        'assume_first' indicates that we assume that the src_id posted a tweet at time 0-, i.e.
+        just before the start of the experiment. This means that none of the ranks will be NaN.
         """
         if self.track_src_id != src_id or force_recalc:
 
@@ -112,12 +116,22 @@ class State:
 
             rank = dict((sink_id, None) for sink_id in follower_ids)
             for sink_id in follower_ids:
+
+                if assume_first:
+                    rank[sink_id] = len(self.sinks[sink_id])
+
                 for ii in range(len(self.sinks[sink_id]) - 1, -1, -1):
                     if self.sinks[sink_id][ii].src_id == src_id:
                         rank[sink_id] = len(self.sinks[sink_id]) - ii - 1
                         break  # breaks the inner for loop
         else:
             rank = self._tracked_ranks
+
+            if assume_first:
+                rank = rank.copy()
+                for sink_id in rank.keys():
+                    if rank[sink_id] is None:
+                        rank[sink_id] = len(self.sinks[sink_id])
 
         if dict_form:
             return rank
@@ -129,7 +143,7 @@ class State:
 
 class Manager:
     def __init__(self, sources, sink_ids=None, end_time=None,
-                 edge_list=None, sim_opts=None):
+                 edge_list=None, sim_opts=None, start_time=0):
         """The edge_list defines the network.
         Default is that all sources are connected to all sinks."""
 
@@ -163,7 +177,7 @@ class Manager:
         self.end_time  = end_time
         self.edge_list = edge_list
         self.sink_ids  = sink_ids
-        self.state     = State(0, sink_ids)
+        self.state     = State(start_time, sink_ids)
         self.sources   = sources
 
     def get_state(self):
@@ -345,7 +359,8 @@ class Broadcaster:
         ret_t_delta = self.last_self_event_time + self.t_delta - cur_time
 
         if ret_t_delta < 0:
-            logging.warning('returned t_delta = {} < 0, set to 0 instead.'.format(ret_t_delta))
+            logging.warning('src_id: {}, event_id: {}, returned t_delta = {} < 0, set to 0 instead.'
+                            .format(self.src_id, event.event_id, ret_t_delta))
             ret_t_delta = 0.0
 
         return ret_t_delta

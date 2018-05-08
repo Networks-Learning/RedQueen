@@ -5,9 +5,16 @@ import numpy                       as np
 import decorated_options           as Deco
 import broadcast.data.hdfs         as hdfs
 import logging
+import warnings
+
 # Comment out while running from IPython to avoid reloading the module
-from opt_model import RealData, SimOpts
-from utils import is_sorted, logTime, def_q_vec
+try:
+    from opt_model import RealData, SimOpts
+    from utils import is_sorted, logTime, def_q_vec
+except NameError:
+    # The may have been imported using %run -i directly.
+    warnings.warn('Unable to import opt_model and utils.')
+
 
 scaled_period = 10000.0
 verbose = False
