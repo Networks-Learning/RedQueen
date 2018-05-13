@@ -239,6 +239,9 @@ class Manager:
         return self
 
     def run_dynamic(self, max_events=float('inf')):
+        if max_events is None:
+            max_events = float('inf')
+
         end_time = self.end_time
 
         # Step 1: Inform the sources of the sinks associated with them.
