@@ -155,10 +155,10 @@ def worker_oracle(params):
     return op
 
 
-def worker_kdd(params, verbose=False, Ks=None):
+def worker_kdd(params, window_start=0, verbose=False, Ks=None):
     seed, capacity, num_segments, sim_opts, world_changing_rates, queue = params
 
-    T = sim_opts.end_time
+    T = sim_opts.end_time - window_start
     seg_len = T / num_segments
 
     if world_changing_rates is None:
@@ -244,9 +244,10 @@ def worker_kdd(params, verbose=False, Ks=None):
 
         piecewise_const_mgr = sim_opts.create_manager_with_piecewise_const(
             seed=seed,
-            change_times=np.arange(num_segments) * seg_len,
+            change_times=window_start + np.arange(num_segments) * seg_len,
             rates=kdd_opt / seg_len
         )
+        piecewise_const_mgr.state.time = window_start
         piecewise_const_mgr.run_dynamic()
         df = piecewise_const_mgr.state.get_dataframe()
         perf = time_in_top_k(df=df, K=k, sim_opts=sim_opts)
@@ -1259,9 +1260,10 @@ def real_worker_kdd(params, verbose=False):
 
             piecewise_const_mgr = sim_opts.create_manager_with_piecewise_const(
                 seed=seed,
-                change_times=np.arange(num_segments) * seg_len,
+                change_times=window_start + np.arange(num_segments) * seg_len,
                 rates=kdd_opt / seg_len
             )
+            piecewise_const_mgr.state.time = window_start
             piecewise_const_mgr.run_dynamic()
             df = piecewise_const_mgr.state.get_dataframe()
             perf = time_in_top_k(df=df, K=k, sim_opts=sim_opts)
