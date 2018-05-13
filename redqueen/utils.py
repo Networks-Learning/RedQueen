@@ -115,10 +115,17 @@ def average_rank(df, src_id=None, end_time=None, sim_opts=None, **kwargs):
 
 
 def int_r_2(df, sim_opts):
-    """Returns ∫r²(t)dt for the given source id."""
+    """Returns ∫avg-rank²(t)dt for the given source id."""
     r_t = rank_of_src_in_df(df, sim_opts.src_id).mean(1)
     r_dt = np.diff(np.concatenate([r_t.index.values, [sim_opts.end_time]]))
     return np.sum(r_t ** 2 * r_dt)
+
+
+def int_r_2_true(df, sim_opts):
+    """Returns ∫avg(rank²(t))dt for the given source id."""
+    r_t = rank_of_src_in_df(df, sim_opts.src_id)
+    r_dt = np.diff(np.concatenate([r_t.index.values, [sim_opts.end_time]]))
+    return np.sum((r_t ** 2).mean(1) * r_dt)
 
 
 def calc_loss_poisson(df, u_const, src_id=None, end_time=None,
@@ -426,16 +433,16 @@ def format_axes(ax):
 # Sweeping q
 
 def q_int_worker(params):
-    sim_opts, seed, dynamic = params
+    sim_opts, seed, dynamic, max_events = params
     m = sim_opts.create_manager_with_opt(seed)
     if dynamic:
-        m.run_dynamic()
+        m.run_dynamic(max_events=max_events)
     else:
         m.run()
     return u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
 
 
-def calc_q_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True):
+def calc_q_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True, max_events=None):
     if seeds is None:
         seeds = range(10)
 
@@ -446,7 +453,7 @@ def calc_q_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True):
         for idx, seed in enumerate(seeds):
             m = sim_opts.create_manager_with_opt(seed)
             if dynamic:
-                m.run_dynamic()
+                m.run_dynamic(max_events=max_events)
             else:
                 m.run()
             capacities[idx] = u_int_opt(m.state.get_dataframe(),
@@ -455,7 +462,7 @@ def calc_q_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True):
         num_workers = min(len(seeds), mp.cpu_count())
         with mp.Pool(num_workers) as pool:
             for (idx, capacity) in \
-                enumerate(pool.imap(q_int_worker, [(sim_opts, x, dynamic)
+                enumerate(pool.imap(q_int_worker, [(sim_opts, x, dynamic, max_events)
                                                    for x in seeds])):
                 capacities[idx] = capacity
 
@@ -483,7 +490,7 @@ def significance_q_int_worker(params):
 
 
 @optioned('opts')
-def calc_significance_capacity_iter(sim_opts, q, time_period, seeds=None, parallel=True):
+def calc_significance_capacity_iter(sim_opts, q, time_period, seeds=None, parallel=True, max_events=None):
     if seeds is None:
         seeds = range(1000, 1025)
 
@@ -510,7 +517,7 @@ def calc_significance_capacity_iter(sim_opts, q, time_period, seeds=None, parall
 
 # There are so many ways this can go south. Particularly, if the user capacity
 # is much higher than the average of the wall of other followees.
-def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynamic=True):
+def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, parallel=True, dynamic=True, max_events=None, max_iters=float('inf')):
     # We know that on average, the ∫u(t)dt decreases with increasing 'q'
 
     def terminate_cond(new_capacity):
@@ -526,7 +533,7 @@ def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynami
             logTime('q_init = {}'.format(q_init))
 
     # Step 1: Find the upper/lower bound by exponential increase/decrease
-    init_cap = calc_q_capacity_iter(sim_opts, q_init, dynamic=dynamic).mean()
+    init_cap = calc_q_capacity_iter(sim_opts, q_init, dynamic=dynamic, parallel=parallel, max_events=max_events).mean()
 
     if terminate_cond(init_cap):
         return q_init
@@ -537,23 +544,31 @@ def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynami
 
     q = q_init
     if init_cap < capacity_cap:
+        iters = 0
         while True:
+            iters += 1
             q_hi = q
             q /= 2.0
             q_lo = q
-            capacity = calc_q_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
+            capacity = calc_q_capacity_iter(sim_opts, q, dynamic=dynamic, parallel=parallel, max_events=max_events).mean()
             if verbose:
                 logTime('q = {}, capacity = {}'.format(q, capacity))
             if terminate_cond(capacity):
                 return q
             if capacity >= capacity_cap:
                 break
+            if iters > max_iters:
+                if verbose:
+                    logTime('Breaking because of max-iters: {}.'.format(max_iters))
+                return q
     else:
+        iters = 0
         while True:
+            iters += 1
             q_lo = q
             q *= 2.0
             q_hi = q
-            capacity = calc_q_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
+            capacity = calc_q_capacity_iter(sim_opts, q, dynamic=dynamic, parallel=parallel, max_events=max_events).mean()
             if verbose:
                 logTime('q = {}, capacity = {}'.format(q, capacity))
             # TODO: will break if capacity_cap is too low ~ 1 event.
@@ -561,6 +576,10 @@ def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynami
                 return q
             if capacity <= capacity_cap:
                 break
+            if iters > max_iters:
+                if verbose:
+                    logTime('Breaking because of max-iters: {}.'.format(max_iters))
+                return q
 
     if verbose:
         logTime('q_hi = {}, q_lo = {}'.format(q_hi, q_lo))
@@ -568,7 +587,7 @@ def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, dynami
     # Step 2: Keep bisecting on 's' until we arrive at a close enough solution.
     while True:
         q = (q_hi + q_lo) / 2.0
-        new_capacity = calc_q_capacity_iter(sim_opts, q, dynamic=dynamic).mean()
+        new_capacity = calc_q_capacity_iter(sim_opts, q, dynamic=dynamic, parallel=parallel, max_events=max_events).mean()
 
         if verbose:
             logTime('new_capacity = {}, q = {}'.format(new_capacity, q))
