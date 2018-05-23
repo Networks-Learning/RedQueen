@@ -439,12 +439,14 @@ def q_int_worker(params):
         m.run_dynamic(max_events=max_events)
     else:
         m.run()
-    return u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
+    # return u_int_opt(m.state.get_dataframe(), sim_opts=sim_opts)
+    return num_tweets_of(m.state.get_dataframe(), sim_opts=sim_opts)
+
 
 
 def calc_q_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True, max_events=None):
     if seeds is None:
-        seeds = range(10)
+        seeds = range(100, 120)
 
     sim_opts = sim_opts.update({'q': q})
 
@@ -456,8 +458,7 @@ def calc_q_capacity_iter(sim_opts, q, seeds=None, parallel=True, dynamic=True, m
                 m.run_dynamic(max_events=max_events)
             else:
                 m.run()
-            capacities[idx] = u_int_opt(m.state.get_dataframe(),
-                                        sim_opts=sim_opts)
+            capacities[idx] = num_tweets_of(m.state.get_dataframe(), sim_opts=sim_opts)
     else:
         num_workers = min(len(seeds), mp.cpu_count())
         with mp.Pool(num_workers) as pool:
@@ -517,12 +518,14 @@ def calc_significance_capacity_iter(sim_opts, q, time_period, seeds=None, parall
 
 # There are so many ways this can go south. Particularly, if the user capacity
 # is much higher than the average of the wall of other followees.
-def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, parallel=True, dynamic=True, max_events=None, max_iters=float('inf')):
+def sweep_q(sim_opts, capacity_cap, tol=1e-2, verbose=False, q_init=None, parallel=True,
+            dynamic=True, max_events=None, max_iters=float('inf'), only_tol=False):
     # We know that on average, the ∫u(t)dt decreases with increasing 'q'
 
     def terminate_cond(new_capacity):
         return abs(new_capacity - capacity_cap) / capacity_cap < tol or \
-            np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1)
+            (not only_tol and np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1))
+            # np.ceil(capacity_cap - 1) <= new_capacity <= np.ceil(capacity_cap + 1)
 
     if q_init is None:
         wall_mgr = sim_opts.create_manager_for_wall()

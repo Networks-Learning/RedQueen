@@ -11,7 +11,7 @@ import bisect
 
 try:
     from .utils import mb, is_sorted
-except:
+except ModuleNotFoundError:
     # May have been imported via explicit %run -i
     warnings.warn('Unable to import is_sorted from utils.')
     pass
