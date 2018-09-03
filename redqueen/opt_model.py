@@ -439,7 +439,7 @@ class Hawkes(Broadcaster):
         return self.l_0 + \
             self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
                                      for s in self.prev_excitations
-                                     if s < t]))
+                                     if s <= t]))
 
     def get_next_interval(self, event):
         t = self.get_current_time(event)
@@ -454,9 +454,11 @@ class Hawkes(Broadcaster):
                 # Rejection sampling
                 if self.random_state.rand() < self.get_rate(t + t_delta) / rate_bound:
                     break
+                else:
+                    t += t_delta
 
             self.prev_excitations.append(t + t_delta)
-            return t_delta
+            return t + t_delta - self.get_current_time(event)
 
 
 class Opt(Broadcaster):
