@@ -403,22 +403,27 @@ class Poisson(Broadcaster):
             # Draw a new time, one event at a time
             return self.random_state.exponential(scale=1.0 / self.rate)
 
-# class Hawkes2(Broadcaster):
-#     def __init__(self, src_id, seed, l_0, alpha, beta):
-#         super(Hawkes2, self).__init__(src_id, seed)
-#         self.l_0 = l_0
-#         self.alpha = alpha
-#         self.beta = beta
-#         self.prev_interactions = []
-#         self.is_dynamic = False
-#         self.init = False
-#
-#     def get_rate(self, t):
-#         """Returns the rate of current Hawkes at time `t`."""
-#         return self.l_0 + \
-#             self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
-#                                      for s in self.prev_excitations
-#                                      if s < t]))
+
+class SmartPoisson(Broadcaster):
+    """Like the Poisson Broadcaster, but does not post if already on top."""
+
+    def __init__(self, src_id, seed, rate=1.0):
+        super(SmartPoisson, self).__init__(src_id, seed)
+        self.is_dynamic = True
+        self.rate = rate
+        self.on_top = False
+
+    def get_next_interval(self, event):
+        if event is None:
+            return self.random_state.exponential(scale=1.0 / self.rate)
+        elif event.src_id == self.src_id:
+            self.on_top = True
+            return np.inf
+        elif self.on_top:
+            # If we are no longer on top, schedule a post.
+            self.on_top = False
+            time_since_last_self_post = self.get_current_time(event) - self.last_self_event_time
+            return time_since_last_self_post + self.random_state.exponential(scale=1.0 / self.rate)
 
 
 class Hawkes(Broadcaster):
