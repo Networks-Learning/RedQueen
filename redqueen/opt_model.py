@@ -612,7 +612,7 @@ class PiecewiseConst(Broadcaster):
 
     def initialize(self):
         self.init = True
-        assert self.start_time <= self.change_times[0]
+        assert self.start_time == self.change_times[0]
         assert self.end_time   >= self.change_times[-1]
 
         duration = self.end_time - self.start_time
