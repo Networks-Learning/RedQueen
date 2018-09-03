@@ -432,22 +432,27 @@ class Poisson(Broadcaster):
             # Draw a new time, one event at a time
             return self.random_state.exponential(scale=1.0 / self.rate)
 
-# class Hawkes2(Broadcaster):
-#     def __init__(self, src_id, seed, l_0, alpha, beta):
-#         super(Hawkes2, self).__init__(src_id, seed)
-#         self.l_0 = l_0
-#         self.alpha = alpha
-#         self.beta = beta
-#         self.prev_interactions = []
-#         self.is_dynamic = False
-#         self.init = False
-#
-#     def get_rate(self, t):
-#         """Returns the rate of current Hawkes at time `t`."""
-#         return self.l_0 + \
-#             self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
-#                                      for s in self.prev_excitations
-#                                      if s < t]))
+
+class SmartPoisson(Broadcaster):
+    """Like the Poisson Broadcaster, but does not post if already on top."""
+
+    def __init__(self, src_id, seed, rate=1.0):
+        super(SmartPoisson, self).__init__(src_id, seed)
+        self.is_dynamic = True
+        self.rate = rate
+        self.on_top = False
+
+    def get_next_interval(self, event):
+        if event is None:
+            return self.random_state.exponential(scale=1.0 / self.rate)
+        elif event.src_id == self.src_id:
+            self.on_top = True
+            return np.inf
+        elif self.on_top:
+            # If we are no longer on top, schedule a post.
+            self.on_top = False
+            time_since_last_self_post = self.get_current_time(event) - self.last_self_event_time
+            return time_since_last_self_post + self.random_state.exponential(scale=1.0 / self.rate)
 
 
 class Hawkes(Broadcaster):
@@ -463,7 +468,7 @@ class Hawkes(Broadcaster):
         return self.l_0 + \
             self.alpha * sum(np.exp([self.beta * -1.0 * (t - s)
                                      for s in self.prev_excitations
-                                     if s < t]))
+                                     if s <= t]))
 
     def get_next_interval(self, event):
         t = self.get_current_time(event)
@@ -478,9 +483,11 @@ class Hawkes(Broadcaster):
                 # Rejection sampling
                 if self.random_state.rand() < self.get_rate(t + t_delta) / rate_bound:
                     break
+                else:
+                    t += t_delta
 
             self.prev_excitations.append(t + t_delta)
-            return t_delta
+            return t + t_delta - self.get_current_time(event)
 
 
 class Opt(Broadcaster):
@@ -634,7 +641,7 @@ class PiecewiseConst(Broadcaster):
 
     def initialize(self):
         self.init = True
-        assert self.start_time <= self.change_times[0]
+        assert self.start_time == self.change_times[0]
         assert self.end_time   >= self.change_times[-1]
 
         duration = self.end_time - self.start_time
